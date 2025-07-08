@@ -3,6 +3,8 @@ import base64
 from io import BytesIO
 from aiogram import Bot, Dispatcher, types
 from aiogram.utils import executor
+from aiogram.utils.markdown import bold
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from dotenv import load_dotenv
 import asyncio
 from openai import AsyncOpenAI
@@ -120,12 +122,38 @@ async def handle_input(message: types.Message):
             max_tokens=2000
         )
         result = response.choices[0].message.content
-        await split_and_send_with_cashback(result, message)
+        chunks = [result[i:i+4096] for i in range(0, len(result), 4096)]
+        for chunk in chunks:
+            await message.answer(chunk)
+
+        await send_topup_offer(message)
 
     except Exception as e:
         await message.answer("❌ Ошибка при анализе.")
         await message.answer(f"📛 Детали: {e}")
         print("OpenAI error:", e)
+
+
+async def send_topup_offer(message: types.Message):
+    offer_text = (
+        "\U0001F4BC *Как пополнять счёт с выгодой?*\n\n"
+        "Теперь ты можешь пополнить счёт в своём букмекерском аккаунте — *безопасно и с кешбэком* \U0001F4B8\n\n"
+        "Сервис **Paydala & Freebee** работает через официальные платёжные каналы и поддерживает:\n\n"
+        "• Olimpbet  \n"
+        "• 1xBet  \n"
+        "• Parimatch  \n"
+        "• Fonbet  \n\n"
+        "\U0001F512 *100% легально и проверено пользователями*  \n"
+        "\U0001F4B8 Кешбэк возвращается на карту или логин\n\n"
+        "\U0001F4CE При желании, можем выдать реквизиты, схемы и партнёрский номер\n\n"
+        "\U0001F4F2 Нажми ниже, если хочешь пополнить — и получить кешбэк"
+    )
+
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(
+        InlineKeyboardButton("\U0001F517 Узнать подробнее", url="https://t.me/loomany")
+    )
+    await message.answer(offer_text, parse_mode="Markdown", reply_markup=keyboard)
 
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
