@@ -3,10 +3,10 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from aiogram.utils import executor
 from dotenv import load_dotenv
-import openai
+from openai import OpenAI
 import asyncio
 
-# Загружаем токены из .env
+# Загружаем токены из .env или Railway
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -15,8 +15,8 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 
-# Настройка OpenAI
-openai.api_key = OPENAI_API_KEY
+# Настройка OpenAI клиента
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 # Клавиатура
 keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
@@ -45,7 +45,7 @@ async def handle_prediction(message: types.Message):
     )
 
     try:
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
                 {"role": "system", "content": "Ты спортивный аналитик с опытом и чувством юмора."},
@@ -54,12 +54,12 @@ async def handle_prediction(message: types.Message):
             temperature=1.0,
             max_tokens=500
         )
-        result = response.choices[0].message["content"]
+        result = response.choices[0].message.content
         await message.answer(result)
 
     except Exception as e:
         await message.answer("❌ Ошибка при получении прогноза от ИИ.")
-        await message.answer(f"📛 Подробности: {str(e)}")  # Показываем ошибку прямо в чат
+        await message.answer(f"📛 Подробности: {str(e)}")
         print("OpenAI error:", e)
 
 # Запуск
