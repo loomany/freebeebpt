@@ -12,9 +12,29 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 client = OpenAI(api_key=OPENAI_API_KEY)
 
+# ID администратора для уведомлений
+ADMIN_ID = 200082134
+
+# Хранилище уже зарегистрированных пользователей
+registered_users: set[int] = set()
+
 # Приветствие
 @dp.message_handler(commands=["start"])
+
 async def start_handler(message: types.Message):
+    user = message.from_user
+
+    if user.id not in registered_users:
+        registered_users.add(user.id)
+        text = (
+            "📥 Новый пользователь зарегистрировался!\n\n"
+            f"👤 Имя: {user.first_name or ''} {user.last_name or ''}\n"
+            f"🆔 ID: {user.id}\n"
+            f"💬 Username: @{user.username if user.username else '—'}\n"
+            f"🌍 Язык: {user.language_code or 'неизвестен'}"
+        )
+        await bot.send_message(chat_id=ADMIN_ID, text=text)
+
     await message.answer(
         "🤖 Тебя приветствует ИИ-бот, который может давать прогнозы на любое спортивное событие.\n\n"
         "Отправь текст или скрин с матчем, и я запущу анализ от имени спортивного аналитика."
