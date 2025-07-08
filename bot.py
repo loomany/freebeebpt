@@ -1,4 +1,6 @@
 import os
+import base64
+from io import BytesIO
 from aiogram import Bot, Dispatcher, types
 from aiogram.utils import executor
 from dotenv import load_dotenv
@@ -45,34 +47,38 @@ async def start_handler(message: types.Message):
 async def handle_input(message: types.Message):
     await message.answer("🧠 Запускаю анализ...")
 
-    # Если пришёл скрин — ставим placeholder, пока не реализован OCR
-    if message.photo:
-        user_prompt = "На изображении содержится скрин матча. Сгенерируй прогноз, предполагая, что пользователь интересуется этим матчем."
-    else:
-        user_prompt = message.text.strip()
+    user_text = (message.caption or message.text or "").strip()
+    user_content = []
 
-    prompt = (
-        f"Ты профессиональный спортивный аналитик.\n"
-        f"Пользователь интересуется матчем или просит прогноз. Запрос:\n"
-        f"\"{user_prompt}\"\n\n"
-        f"Сделай подробный прогноз, включая:\n"
-        f"- матч, дату и турнир\n"
-        f"- ставку и рекомендуемый маркет (например: П1, Тотал Больше 2.5)\n"
-        f"- текущие коэффициенты (если можешь предположить)\n"
-        f"- форму команд (5 последних матчей)\n"
-        f"- H2H (личные встречи)\n"
-        f"- ключевых игроков, травмы или дисквалификации\n"
-        f"- уверенный вывод (можно с ⚽️📊🔥)\n"
-        f"\nЕсли данных мало — используй обоснованные домыслы, но не выдумывай матч полностью."
-    )
+    if user_text:
+        user_content.append({"type": "text", "text": user_text})
+
+    if message.photo:
+        photo = message.photo[-1]
+        buffer = BytesIO()
+        await photo.download(destination=buffer)
+        buffer.seek(0)
+        img_b64 = base64.b64encode(buffer.read()).decode()
+        user_content.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}
+        })
+
+    messages = [
+        {
+            "role": "system",
+            "content": "Ты честный спортивный аналитик с глубоким пониманием футбола, статистики и формы команд. Не пиши чушь."
+        },
+        {
+            "role": "user",
+            "content": user_content
+        }
+    ]
 
     try:
         response = client.chat.completions.create(
             model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "Ты честный спортивный аналитик с глубоким пониманием футбола, статистики и формы команд. Не пиши чушь."},
-                {"role": "user", "content": prompt}
-            ],
+            messages=messages,
             temperature=1.0,
             max_tokens=800
         )
