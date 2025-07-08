@@ -39,7 +39,6 @@ async def start_handler(message: types.Message):
 async def handle_prediction(message: types.Message):
     await message.answer("⏳ Генерирую прогноз от ИИ...")
 
-    # Простой промпт — можно улучшать
     gpt_prompt = (
         "Сделай краткий прогноз на одно из ближайших популярных спортивных событий "
         "(футбол, теннис, баскетбол), включая команду, ставку, коэффициент и 2-3 причины."
@@ -47,7 +46,7 @@ async def handle_prediction(message: types.Message):
 
     try:
         response = openai.ChatCompletion.create(
-            model="gpt-4o",  # Самая новая версия
+            model="gpt-4o",
             messages=[
                 {"role": "system", "content": "Ты спортивный аналитик с опытом и чувством юмора."},
                 {"role": "user", "content": gpt_prompt}
@@ -60,6 +59,7 @@ async def handle_prediction(message: types.Message):
 
     except Exception as e:
         await message.answer("❌ Ошибка при получении прогноза от ИИ.")
+        await message.answer(f"📛 Подробности: {str(e)}")  # Показываем ошибку прямо в чат
         print("OpenAI error:", e)
 
 # Запуск
