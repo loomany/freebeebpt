@@ -1,13 +1,33 @@
 # FreeBeeBPT Bot
 
-A Telegram bot using aiogram and OpenAI for sports predictions.
+FreeBeeBPT is a Telegram bot built with aiogram and OpenAI. It provides sports predictions when users send match text or screenshots.
 
-## Configuration
+## Installation
 
-Create a `.env` file based on `.env.example` and provide:
+1. Clone the repository and (optionally) create a virtual environment.
+2. Install the dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+3. Create a `.env` file based on `.env.example` and fill in the required variables.
 
-- `BOT_TOKEN` – Telegram bot token
-- `OPENAI_API_KEY` – your OpenAI API key
-- `ADMIN_ID` – Telegram ID to receive registration notifications
+### Environment variables
 
-Install dependencies with `pip install -r requirements.txt` and run the bot with `python bot.py`.
+- `BOT_TOKEN` – Telegram bot token.
+- `OPENAI_API_KEY` – your OpenAI API key.
+- `ADMIN_ID` – Telegram ID for registration notifications.
+
+## Usage
+
+### Local run
+
+```bash
+python bot.py
+```
+
+### Docker
+
+```bash
+docker build -t freebeebpt .
+docker run --env-file .env freebeebpt
+```
