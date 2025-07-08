@@ -10,13 +10,12 @@ from openai import AsyncOpenAI
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+# ID администратора для уведомлений
+ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 client = AsyncOpenAI(api_key=OPENAI_API_KEY)
-
-# ID администратора для уведомлений
-ADMIN_ID = 200082134
 
 # Хранилище уже зарегистрированных пользователей
 registered_users: set[int] = set()
