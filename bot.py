@@ -116,7 +116,7 @@ async def handle_input(message: types.Message):
         keyboard.add(
             types.InlineKeyboardButton(
                 "💬 Узнать подробнее",
-                url="https://t.me/freebee_admin",
+                url="https://t.me/loomany",
             )
         )
 
