@@ -4,7 +4,8 @@ from io import BytesIO
 from aiogram import Bot, Dispatcher, types
 from aiogram.utils import executor
 from dotenv import load_dotenv
-from openai import OpenAI
+import asyncio
+from openai import AsyncOpenAI
 
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -12,7 +13,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
-client = OpenAI(api_key=OPENAI_API_KEY)
+client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 # ID администратора для уведомлений
 ADMIN_ID = 200082134
@@ -76,7 +77,7 @@ async def handle_input(message: types.Message):
     ]
 
     try:
-        response = client.chat.completions.create(
+        response = await client.chat.completions.create(
             model="gpt-4o",
             messages=messages,
             temperature=1.0,
@@ -92,4 +93,10 @@ async def handle_input(message: types.Message):
 
 # Старт
 if __name__ == "__main__":
-    executor.start_polling(dp, skip_updates=True)
+    loop = asyncio.get_event_loop()
+    try:
+        executor.start_polling(dp, skip_updates=True)
+    finally:
+        loop.run_until_complete(bot.session.close())
+        loop.run_until_complete(client.aclose())
+        loop.close()
