@@ -1,0 +1,10 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "my-bot"
+version = "0.1.0"
+
+[tool.railway]
+pythonVersion = "3.11"
