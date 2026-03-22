@@ -36,6 +36,7 @@ def register_admin_news_handlers(dp: Dispatcher, *, context: dict[str, Any]) -> 
                     f"api key configured: {'yes' if gnews_service.configured else 'no'}",
                     f"today_requests: {repository.get_daily_requests()}",
                     f"last_fetch_time: {stats['last_fetch_time'] or 'never'}",
+                    f"last_topic: {stats['last_topic'] or 'n/a'}",
                     f"total_saved_articles: {stats['total_saved_articles']}",
                     f"total_posted_articles: {stats['total_posted_articles']}",
                 ]
@@ -63,18 +64,10 @@ def register_admin_news_handlers(dp: Dispatcher, *, context: dict[str, Any]) -> 
         summary = await news_pipeline.run_single_topic_cycle(topic, trigger="manual")
         await message.answer(summary)
 
-    @dp.message_handler(commands=["test_news_format"])
-    async def test_news_format_handler(message: types.Message):
+    @dp.message_handler(commands=["news_test"])
+    async def news_test_handler(message: types.Message):
         if not await _ensure_admin(message):
             return
-        demo_article = {
-            "topic": "football",
-            "title": "Mbappé could miss the next match after picking up an injury.",
-            "description": "The forward is being assessed after the latest training session.",
-            "content": None,
-            "url": "https://example.com/story",
-            "source_name": "ESPN",
-            "source_url": "https://www.espn.com",
-        }
-        formatted, _, _ = await context["formatter"].format_post(demo_article)
-        await message.answer(formatted)
+        await message.answer("Запускаю debug-пайплайн news_test...")
+        summary = await news_pipeline.run_news_test()
+        await message.answer(summary)

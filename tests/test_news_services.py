@@ -3,9 +3,11 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock
 
-from services.gnews_service import DAILY_REQUEST_HARD_LIMIT, GNewsService
+from services.article_extractor import build_fallback_text, clean_article_text
+from services.gnews_service import GNewsService
 from services.news_pipeline import NewsPipeline
 from services.news_repository import NewsRepository
+from services.translator import KazakhTranslator
 
 
 class NewsRepositoryTests(unittest.TestCase):
@@ -23,11 +25,21 @@ class NewsRepositoryTests(unittest.TestCase):
             self.assertEqual(repository.increment_daily_requests("2026-03-22", 2), 3)
 
 
+class ArticleHelpersTests(unittest.TestCase):
+    def test_clean_article_text_removes_noise_and_tail(self):
+        cleaned = clean_article_text("Hello\n\nAdvertisement\nWorld [+123 chars]")
+        self.assertEqual(cleaned, "Hello\n\nWorld")
+
+    def test_build_fallback_text_prefers_clean_content(self):
+        article = {"title": "Title", "description": "Desc", "content": "Content [+99 chars]"}
+        self.assertEqual(build_fallback_text(article, None), "Content")
+
+
 class GNewsServiceTests(unittest.IsolatedAsyncioTestCase):
     async def test_fetch_topic_news_stops_at_limit(self):
         with TemporaryDirectory() as tmp_dir:
             repository = NewsRepository(Path(tmp_dir) / "test.sqlite3")
-            repository.increment_daily_requests("2026-03-22", DAILY_REQUEST_HARD_LIMIT)
+            repository.increment_daily_requests("2026-03-22", 96)
             service = GNewsService(repository=repository, api_key="test")
 
             result = await service.fetch_topic_news("football")
@@ -39,7 +51,7 @@ class GNewsServiceTests(unittest.IsolatedAsyncioTestCase):
         with TemporaryDirectory() as tmp_dir:
             repository = NewsRepository(Path(tmp_dir) / "test.sqlite3")
             service = GNewsService(repository=repository, api_key="test")
-            service._request_json = AsyncMock(
+            service.fetcher._request_json = AsyncMock(
                 return_value={
                     "articles": [
                         {
@@ -70,13 +82,20 @@ class GNewsServiceTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(result.new_articles), 1)
 
 
+class TranslatorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_translate_to_kazakh_returns_original_without_client(self):
+        translator = KazakhTranslator(client=None)
+        translated = await translator.translate_to_kazakh("Sample text")
+        self.assertEqual(translated, "Sample text")
+
+
 class NewsPipelineTests(unittest.IsolatedAsyncioTestCase):
     async def test_run_single_topic_marks_extra_articles_as_queued(self):
         with TemporaryDirectory() as tmp_dir:
             repository = NewsRepository(Path(tmp_dir) / "test.sqlite3")
             bot = AsyncMock()
             formatter = AsyncMock()
-            formatter.format_post = AsyncMock(return_value=("message", "ru", "kk"))
+            formatter.format_post = AsyncMock(return_value=(["message"], "kk"))
             gnews_service = AsyncMock()
             gnews_service.fetch_topic_news = AsyncMock(
                 return_value=type(
@@ -86,7 +105,7 @@ class NewsPipelineTests(unittest.IsolatedAsyncioTestCase):
                         "topic": "football",
                         "fetched_articles": 4,
                         "new_articles": [
-                            {"dedupe_key": f"key-{i}", "topic": "football", "source_name": "ESPN", "url": f"https://e/{i}"}
+                            {"article_hash": f"key-{i}", "topic": "football", "title": f"T{i}", "source_name": "ESPN", "url": f"https://e/{i}"}
                             for i in range(4)
                         ],
                         "request_count_today": 1,
@@ -94,12 +113,11 @@ class NewsPipelineTests(unittest.IsolatedAsyncioTestCase):
                 )()
             )
             for i in range(4):
-                repository.save_article(
+                repository.save_sent_news(
                     type("Record", (), {
-                        "topic": "football", "url": f"https://e/{i}", "title": f"T{i}", "description": None,
+                        "topic": "football", "article_hash": f"key-{i}", "url": f"https://e/{i}", "title": f"T{i}", "description": None,
                         "content": None, "published_at": None, "image": None, "source_name": "ESPN",
-                        "source_url": None, "dedupe_key": f"key-{i}", "status": "new", "ru_text": None,
-                        "kk_text": None, "raw_payload": None,
+                        "source_url": None, "status": "new", "translated_text": None, "raw_payload": None,
                     })()
                 )
             pipeline = NewsPipeline(
@@ -111,6 +129,8 @@ class NewsPipelineTests(unittest.IsolatedAsyncioTestCase):
                 news_channel_id=None,
                 news_post_mode="admin",
             )
+            pipeline.extract_enabled = False
+            pipeline.send_photo_enabled = False
 
             summary = await pipeline.run_single_topic_cycle("football", trigger="test")
 
