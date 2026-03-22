@@ -92,3 +92,73 @@ class SportsProviderDebugFixtureLookupTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(debug["selected_team_ids"], {"team1_id": None, "team2_id": 2})
         self.assertEqual(debug["reason"], "wrong team_id")
 
+
+
+class SportsProviderRequestedCaseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_debug_fixture_lookup_for_stockport_county_vs_afc_wimbledon(self):
+        provider = SportsProvider(api_key="test")
+        provider._get = AsyncMock(
+            side_effect=[
+                {
+                    "response": [
+                        {"team": {"id": 101, "name": "Stockport"}},
+                        {"team": {"id": 202, "name": "Stockport County"}},
+                    ]
+                },
+                {
+                    "response": [
+                        {"team": {"id": 303, "name": "Wimbledon"}},
+                        {"team": {"id": 404, "name": "AFC Wimbledon"}},
+                    ]
+                },
+                {
+                    "response": [
+                        {
+                            "fixture": {"id": 555, "date": "2026-03-28T15:00:00+00:00"},
+                            "teams": {
+                                "home": {"id": 202, "name": "Stockport County"},
+                                "away": {"id": 404, "name": "AFC Wimbledon"},
+                            },
+                        }
+                    ]
+                },
+            ]
+        )
+
+        debug = await provider.debug_fixture_lookup("Stockport County", "AFC Wimbledon", "2026-03-28")
+
+        self.assertEqual(debug["selected_team_ids"], {"team1_id": 202, "team2_id": 404})
+        self.assertEqual(debug["found_match"], "YES")
+        self.assertEqual(debug["reason"], "match found")
+
+class SportsProviderTeamSearchTests(unittest.IsolatedAsyncioTestCase):
+    async def test_resolve_team_id_uses_nested_team_structure_and_best_name_match(self):
+        provider = SportsProvider(api_key="test")
+        provider._get = AsyncMock(
+            return_value={
+                "response": [
+                    {"team": {"id": 999, "name": "Wimbledon FC"}},
+                    {"team": {"id": 2, "name": "AFC Wimbledon"}},
+                ]
+            }
+        )
+
+        team_id = await provider.resolve_team_id("AFC Wimbledon")
+
+        self.assertEqual(team_id, 2)
+
+    async def test_search_team_returns_selected_response_item(self):
+        provider = SportsProvider(api_key="test")
+        provider._get = AsyncMock(
+            return_value={
+                "response": [
+                    {"team": {"id": 11, "name": "Stockport"}},
+                    {"team": {"id": 22, "name": "Stockport County"}, "venue": {"id": 5, "name": "Edgeley Park"}},
+                ]
+            }
+        )
+
+        team_data = await provider.search_team("Stockport County")
+
+        self.assertEqual((team_data or {}).get("team", {}).get("id"), 22)
+        self.assertEqual((team_data or {}).get("team", {}).get("name"), "Stockport County")
