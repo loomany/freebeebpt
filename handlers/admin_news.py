@@ -71,3 +71,25 @@ def register_admin_news_handlers(dp: Dispatcher, *, context: dict[str, Any]) -> 
         await message.answer("Запускаю debug-пайплайн news_test...")
         summary = await news_pipeline.run_news_test()
         await message.answer(summary)
+
+    @dp.message_handler(commands=["news_test_ai"])
+    async def news_test_ai_handler(message: types.Message):
+        if not await _ensure_admin(message):
+            return
+        await message.answer("Запускаю AI-тест новости...")
+        summary = await news_pipeline.run_news_test_ai()
+        await message.answer(summary)
+
+    @dp.message_handler(commands=["news_test_raw"])
+    async def news_test_raw_handler(message: types.Message):
+        if not await _ensure_admin(message):
+            return
+        summary = await news_pipeline.run_news_test_raw()
+        await message.answer(summary)
+
+    @dp.message_handler(commands=["news_test_compare"])
+    async def news_test_compare_handler(message: types.Message):
+        if not await _ensure_admin(message):
+            return
+        summary = await news_pipeline.run_news_test_compare()
+        await message.answer(summary)
