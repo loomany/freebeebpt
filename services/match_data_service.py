@@ -67,7 +67,7 @@ class MatchDataService:
         return payload
 
     def _log_block_source(self, block_name: str, has_data: bool) -> None:
-        logger.info("[DATA SOURCE] %s: %s", block_name, "API" if has_data else "MISSING")
+        logger.info("[DATA SOURCE] %s = %s", block_name, "OK" if has_data else "EMPTY")
 
     @staticmethod
     def _make_team_standing(entry: dict[str, Any] | None) -> dict[str, str]:
@@ -302,7 +302,12 @@ class MatchDataService:
         if ALLOW_LLM_FOR_FACTS:
             raise RuntimeError("ALLOW_LLM_FOR_FACTS must remain False for Match Center factual data")
 
+        self.sports_provider.last_api_call_attempted = False
+
         try:
+            status_payload = await self.sports_provider.check_api_status()
+            if not status_payload:
+                logger.warning("Sports API status returned empty payload")
             fixture = await self.sports_provider.find_fixture(
                 home_team=match_info.get("home_team") or "",
                 away_team=match_info.get("away_team") or "",
@@ -320,6 +325,8 @@ class MatchDataService:
             )
 
         if not fixture:
+            if not self.sports_provider.last_api_call_attempted:
+                raise RuntimeError("Sports API fallback triggered before any API request was attempted")
             logger.warning("Fixture not found for %s vs %s", match_info.get("home_team"), match_info.get("away_team"))
             return self._build_missing_payload(
                 match_info,
