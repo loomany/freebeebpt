@@ -24,7 +24,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ADMIN_ID_RAW = os.getenv("ADMIN_ID")
 ADMIN_ID = int(ADMIN_ID_RAW) if ADMIN_ID_RAW else None
-NEWS_CHANNEL_ID = os.getenv("NEWS_CHANNEL_ID")
+NEWS_CHANNEL_ID = os.getenv("TELEGRAM_NEWS_CHAT_ID") or os.getenv("NEWS_CHANNEL_ID")
 NEWS_POST_MODE = os.getenv("NEWS_POST_MODE", "admin")
 GNEWS_API_KEY = os.getenv("GNEWS_API_KEY")
 
@@ -63,12 +63,13 @@ register_admin_news_handlers(
 async def start_handler(message: types.Message):
     await message.answer(
         "Привет! Это спортивный новостной бот.\n"
-        "Доступные админ-команды: /news_status, /fetch_news_now, /fetch_topic, /test_news_format"
+        "Доступные админ-команды: /news_status, /fetch_news_now, /fetch_topic, /news_test"
     )
 
 
 async def on_startup(_: Dispatcher) -> None:
-    asyncio.create_task(run_hourly_news_scheduler(news_pipeline))
+    if os.getenv("NEWS_ENABLED", "true").lower() == "true":
+        asyncio.create_task(run_hourly_news_scheduler(news_pipeline))
 
 
 if __name__ == "__main__":
