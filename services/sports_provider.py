@@ -148,6 +148,21 @@ class SportsProvider:
             },
         }
 
+    @classmethod
+    def _team_search_score(cls, query: str, candidate_name: str | None) -> tuple[int, int, str]:
+        normalized_query = cls._normalize_name(query)
+        normalized_candidate = cls._normalize_name(candidate_name)
+        exact_match = int(normalized_candidate == normalized_query and normalized_query != "")
+        contains_match = int(normalized_query in normalized_candidate and normalized_query != "")
+        length_delta = abs(len(normalized_candidate) - len(normalized_query))
+        return (exact_match, contains_match, -length_delta, normalized_candidate)
+
+    @classmethod
+    def _select_best_team_match(cls, team_name: str, response: list[dict[str, Any]]) -> dict[str, Any] | None:
+        if not response:
+            return None
+        return max(response, key=lambda item: cls._team_search_score(team_name, ((item or {}).get("team") or {}).get("name")))
+
     @staticmethod
     def _serialize_fixture_brief(fixture: dict[str, Any]) -> dict[str, Any]:
         fixture_data = fixture.get("fixture") or {}
@@ -163,11 +178,35 @@ class SportsProvider:
             "away.name": away.get("name"),
         }
 
+    async def resolve_team_id(self, team_name: str) -> int | None:
+        payload = await self._get("/teams", search=team_name)
+        logger.info("[TEAM SEARCH RAW] %s", json.dumps(payload, ensure_ascii=False))
+        response = payload.get("response") or []
+        team_data = self._select_best_team_match(team_name, response)
+        selected_team = (team_data or {}).get("team") or {}
+        team_id = selected_team.get("id")
+        logger.info(
+            "[TEAM SEARCH PARSED] query=%s, selected_id=%s, selected_name=%s",
+            team_name,
+            team_id,
+            selected_team.get("name"),
+        )
+        logger.info("[API] team=%s → id=%s", team_name, team_id if team_id is not None else "NOT_FOUND")
+        return team_id
+
     async def search_team(self, team_name: str) -> dict[str, Any] | None:
         payload = await self._get("/teams", search=team_name)
+        logger.info("[TEAM SEARCH RAW] %s", json.dumps(payload, ensure_ascii=False))
         response = payload.get("response") or []
-        team_data = response[0] if response else None
-        team_id = ((team_data or {}).get("team") or {}).get("id")
+        team_data = self._select_best_team_match(team_name, response)
+        selected_team = (team_data or {}).get("team") or {}
+        team_id = selected_team.get("id")
+        logger.info(
+            "[TEAM SEARCH PARSED] query=%s, selected_id=%s, selected_name=%s",
+            team_name,
+            team_id,
+            selected_team.get("name"),
+        )
         logger.info("[API] team=%s → id=%s", team_name, team_id if team_id is not None else "NOT_FOUND")
         return team_data
 
@@ -210,10 +249,12 @@ class SportsProvider:
 
         team1_payload = await self._get("/teams", search=home_team)
         team2_payload = await self._get("/teams", search=away_team)
+        logger.info("[TEAM SEARCH RAW] %s", json.dumps(team1_payload, ensure_ascii=False))
+        logger.info("[TEAM SEARCH RAW] %s", json.dumps(team2_payload, ensure_ascii=False))
         team1_response = team1_payload.get("response") or []
         team2_response = team2_payload.get("response") or []
-        team1_data = team1_response[0] if team1_response else None
-        team2_data = team2_response[0] if team2_response else None
+        team1_data = self._select_best_team_match(home_team, team1_response)
+        team2_data = self._select_best_team_match(away_team, team2_response)
         team1_id = ((team1_data or {}).get("team") or {}).get("id")
         team2_id = ((team2_data or {}).get("team") or {}).get("id")
 
@@ -221,6 +262,8 @@ class SportsProvider:
         serialized_team2 = self._serialize_team_search_result(away_team, team2_data)
         logger.info("[DEBUG FIXTURE] /teams?search=%s => %s", home_team, json.dumps(serialized_team1, ensure_ascii=False))
         logger.info("[DEBUG FIXTURE] /teams?search=%s => %s", away_team, json.dumps(serialized_team2, ensure_ascii=False))
+        logger.info("[TEAM SEARCH PARSED] query=%s, selected_id=%s, selected_name=%s", home_team, team1_id, ((team1_data or {}).get("team") or {}).get("name"))
+        logger.info("[TEAM SEARCH PARSED] query=%s, selected_id=%s, selected_name=%s", away_team, team2_id, ((team2_data or {}).get("team") or {}).get("name"))
         logger.info("[DEBUG FIXTURE] selected team1_id=%s team2_id=%s", team1_id, team2_id)
 
         date_window = self._build_fixture_date_window(date)
