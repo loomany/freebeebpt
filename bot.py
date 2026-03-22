@@ -12,7 +12,8 @@ from openai import AsyncOpenAI
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
+ADMIN_ID_RAW = os.getenv("ADMIN_ID")
+ADMIN_ID = int(ADMIN_ID_RAW) if ADMIN_ID_RAW else None
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
@@ -62,7 +63,8 @@ async def start_handler(message: types.Message):
             f"💬 Username: @{user.username or '—'}\n"
             f"🌍 Язык: {user.language_code or 'неизвестен'}"
         )
-        await bot.send_message(chat_id=ADMIN_ID, text=text)
+        if ADMIN_ID is not None:
+            await bot.send_message(chat_id=ADMIN_ID, text=text)
 
     await message.answer(
         "🤖 Добро пожаловать! Я ИИ-бот для глубокого разбора матчей.\n"
