@@ -1,51 +1,93 @@
-# FreeBeeBPT Bot
+# FreeBeeBPT News Bot
 
-FreeBeeBPT is a Telegram bot built with aiogram, OpenAI, and a real football data provider. OpenAI is used only to recognize a match from a screenshot/text and optionally normalize names, while factual Match Center blocks are filled from sports API data.
+Telegram-бот публикует только англоязычные спортивные новости из GNews API по 4 темам: football, tennis, hockey, basketball. Новости кратко переводятся на русский и казахский через OpenAI и отправляются в Telegram.
 
-## Installation
+## Переменные окружения
 
-1. Clone the repository and (optionally) create a virtual environment.
-2. Install the dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-3. Create a `.env` file based on `.env.example` and fill in the required variables.
+- `GNEWS_API_KEY`
+- `OPENAI_API_KEY`
+- `BOT_TOKEN`
+- `ADMIN_ID`
+- `NEWS_CHANNEL_ID`
+- `NEWS_POST_MODE=admin|channel` (по умолчанию `admin`)
+- `LOG_LEVEL`
 
-### Environment variables
+Если `GNEWS_API_KEY` не задан, бот логирует: `GNEWS_API_KEY не задан`.
 
-- `BOT_TOKEN` – Telegram bot token.
-- `OPENAI_API_KEY` – your OpenAI API key for screenshot/text match recognition only.
-- `SPORTS_API_KEY` – API-Football / API-Sports key for real match data.
-- `SPORTS_API_HOST` – API host, defaults to `v3.football.api-sports.io`.
-- `SPORTS_API_PROVIDER` – provider label used in logs/output, defaults to `api-football`.
-- `SPORTS_API_BASE_URL` – provider base URL, defaults to `https://v3.football.api-sports.io`.
-- `ADMIN_ID` – optional Telegram ID for registration notifications; if omitted, the bot skips admin alerts.
-- `LOG_LEVEL` – Python logging level, defaults to `INFO`.
+## Используемый endpoint
 
-## Usage
+Основной endpoint:
 
-### Local run
+```text
+GET https://gnews.io/api/v4/search?q={topic}&lang=en&max=10&sortby=publishedAt&page=1&apikey=...
+```
+
+Темы первого этапа:
+- `football`
+- `tennis`
+- `hockey`
+- `basketball`
+
+## Лимит запросов
+
+- Планировщик запускает один цикл каждый час.
+- Внутри цикла выполняются 4 запроса: по одному на каждую тему.
+- Это даёт `4 × 24 = 96` запросов в сутки.
+- В SQLite хранится суточный счётчик запросов.
+- Hard stop: `96` запросов в сутки, чтобы сохранить запас для ручных запусков.
+
+## Дедупликация
+
+SQLite база: `data/news_bot.sqlite3`.
+
+Таблица `news_posts` хранит:
+- тему,
+- URL,
+- заголовок,
+- время публикации,
+- источник,
+- тексты RU/KK,
+- статус (`new`, `posted`, `queued`, `failed`).
+
+Ключ дедупликации:
+1. `url`
+2. fallback: `sha256(title + publishedAt)`
+
+## Админ-команды
+
+- `/news_status`
+- `/fetch_news_now`
+- `/fetch_topic football`
+- `/fetch_topic tennis`
+- `/fetch_topic hockey`
+- `/fetch_topic basketball`
+- `/test_news_format`
+
+## Локальный запуск
 
 ```bash
+pip install -r requirements.txt
 python bot.py
 ```
 
-### Debugging API-Football
+## Ручное тестирование
 
-- Use the Telegram command `/test_api` to call `/status` and `/fixtures?team=33&next=10`.
-- Runtime logs now include `[API REQUEST]`, `[API RESPONSE STATUS]`, `[API RESPONSE BODY]`, `[FIND FIXTURE]`, `[API] team1=... → id=...`, `[API] team2=... → id=...`, `[API] from=YYYY-MM-DD, [API] to=YYYY-MM-DD`, `[API] fixtures count=...`, `[API] found match=YES/NO`, and `[DATA SOURCE] ... = OK/EMPTY`.
+1. Заполнить `.env` нужными ключами.
+2. Запустить `python bot.py`.
+3. В Telegram вызвать `/news_status`.
+4. Выполнить `/fetch_news_now` или `/fetch_topic football`.
+5. Проверить, что новые новости ушли админу или в канал в зависимости от `NEWS_POST_MODE`.
+6. Повторно вызвать команду и убедиться, что дубликаты не публикуются.
 
-### Docker
+## Пример поста
 
-```bash
-docker build -t freebeebpt .
-docker run --env-file .env freebeebpt
+```text
+📰 Football
+
+🇷🇺 Мбаппе может пропустить следующий матч из-за повреждения.
+
+🇰🇿 Мбаппе жарақатына байланысты келесі матчты өткізіп алуы мүмкін.
+
+🔗 ESPN
+https://example.com/story
 ```
-
-
-## Data source architecture
-
-- `ALLOW_LLM_FOR_FACTS = False` in `services/match_data_service.py` explicitly forbids LLM-generated factual blocks.
-- `services/sports_provider.py` integrates API-Football-compatible endpoints for fixtures, standings, lineups, injuries, H2H, form, team stats, match context, and referee.
-- If an API block is unavailable, Match Center uses deterministic fallbacks such as `Составы уточняются`, `Данные по судье уточняются`, `Недостаточно данных`, and `Существенных потерь не выявлено`.
-- Runtime logs report factual block coverage, for example: `[DATA SOURCE] standings = OK` or `[DATA SOURCE] cards = EMPTY`.
