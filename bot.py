@@ -11,9 +11,11 @@ from openai import AsyncOpenAI
 
 from handlers.admin_news import register_admin_news_handlers
 from scheduler.news_scheduler import run_hourly_news_scheduler
+from services.ai_news_processor import AINewsProcessor
 from services.gnews_service import GNewsService
 from services.news_formatter import NewsFormatter
 from services.news_pipeline import NewsPipeline
+from services.news_ranker import NewsRanker
 from services.news_repository import NewsRepository
 
 load_dotenv()
@@ -36,12 +38,16 @@ dp = Dispatcher(bot)
 client = AsyncOpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 repository = NewsRepository()
 gnews_service = GNewsService(repository=repository, api_key=GNEWS_API_KEY)
-formatter = NewsFormatter(client=client)
+ai_processor = AINewsProcessor(client=client)
+ranker = NewsRanker(min_score=int(os.getenv("NEWS_IMPORTANCE_MIN_SCORE", "75")))
+formatter = NewsFormatter()
 news_pipeline = NewsPipeline(
     bot=bot,
     repository=repository,
     gnews_service=gnews_service,
     formatter=formatter,
+    ai_processor=ai_processor,
+    ranker=ranker,
     admin_id=ADMIN_ID,
     news_channel_id=NEWS_CHANNEL_ID,
     news_post_mode=NEWS_POST_MODE,
@@ -53,6 +59,8 @@ register_admin_news_handlers(
         "repository": repository,
         "gnews_service": gnews_service,
         "formatter": formatter,
+        "ai_processor": ai_processor,
+        "ranker": ranker,
         "news_pipeline": news_pipeline,
         "news_post_mode": NEWS_POST_MODE,
     },
@@ -63,7 +71,7 @@ register_admin_news_handlers(
 async def start_handler(message: types.Message):
     await message.answer(
         "Привет! Это спортивный новостной бот.\n"
-        "Доступные админ-команды: /news_status, /fetch_news_now, /fetch_topic, /news_test"
+        "Доступные админ-команды: /news_status, /fetch_news_now, /fetch_topic, /news_test, /news_test_ai, /news_test_raw, /news_test_compare"
     )
 
 

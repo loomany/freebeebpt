@@ -30,6 +30,12 @@ class NewsArticleRecord:
     status: str = "new"
     translated_text: str | None = None
     raw_payload: str | None = None
+    importance_score: int | None = None
+    importance_level: str | None = None
+    rewritten_title_kk: str | None = None
+    summary_kk: str | None = None
+    betting_impact_kk: str | None = None
+    team_impact_kk: str | None = None
 
 
 class NewsRepository:
@@ -68,6 +74,12 @@ class NewsRepository:
                     source_url TEXT,
                     translated_text TEXT,
                     raw_payload TEXT,
+                    importance_score INTEGER,
+                    importance_level TEXT,
+                    rewritten_title_kk TEXT,
+                    summary_kk TEXT,
+                    betting_impact_kk TEXT,
+                    team_impact_kk TEXT,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
@@ -90,6 +102,18 @@ class NewsRepository:
                 )
                 """
             )
+            existing_columns = {row[1] for row in connection.execute("PRAGMA table_info(news_sent)").fetchall()}
+            migrations = {
+                "importance_score": "ALTER TABLE news_sent ADD COLUMN importance_score INTEGER",
+                "importance_level": "ALTER TABLE news_sent ADD COLUMN importance_level TEXT",
+                "rewritten_title_kk": "ALTER TABLE news_sent ADD COLUMN rewritten_title_kk TEXT",
+                "summary_kk": "ALTER TABLE news_sent ADD COLUMN summary_kk TEXT",
+                "betting_impact_kk": "ALTER TABLE news_sent ADD COLUMN betting_impact_kk TEXT",
+                "team_impact_kk": "ALTER TABLE news_sent ADD COLUMN team_impact_kk TEXT",
+            }
+            for column, statement in migrations.items():
+                if column not in existing_columns:
+                    connection.execute(statement)
 
     def build_dedupe_key(self, url: str | None, title: str, published_at: str | None, source_name: str | None = None) -> str:
         return build_article_hash(url, source_name, title if published_at is None else f"{title} {published_at}")
@@ -106,12 +130,20 @@ class NewsRepository:
                 """
                 INSERT INTO news_sent (
                     article_hash, source_name, title, url, published_at, sent_at, topic, status,
-                    description, content, image, source_url, translated_text, raw_payload, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    description, content, image, source_url, translated_text, raw_payload,
+                    importance_score, importance_level, rewritten_title_kk, summary_kk,
+                    betting_impact_kk, team_impact_kk, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(article_hash) DO UPDATE SET
                     sent_at = COALESCE(excluded.sent_at, news_sent.sent_at),
                     status = excluded.status,
                     translated_text = COALESCE(excluded.translated_text, news_sent.translated_text),
+                    importance_score = COALESCE(excluded.importance_score, news_sent.importance_score),
+                    importance_level = COALESCE(excluded.importance_level, news_sent.importance_level),
+                    rewritten_title_kk = COALESCE(excluded.rewritten_title_kk, news_sent.rewritten_title_kk),
+                    summary_kk = COALESCE(excluded.summary_kk, news_sent.summary_kk),
+                    betting_impact_kk = COALESCE(excluded.betting_impact_kk, news_sent.betting_impact_kk),
+                    team_impact_kk = COALESCE(excluded.team_impact_kk, news_sent.team_impact_kk),
                     updated_at = CURRENT_TIMESTAMP
                 """,
                 (
@@ -129,10 +161,29 @@ class NewsRepository:
                     record.source_url,
                     record.translated_text,
                     record.raw_payload,
+                    record.importance_score,
+                    record.importance_level,
+                    record.rewritten_title_kk,
+                    record.summary_kk,
+                    record.betting_impact_kk,
+                    record.team_impact_kk,
                 ),
             )
 
-    def update_sent_status(self, article_hash: str, status: str, *, translated_text: str | None = None, sent_at: str | None = None) -> None:
+    def update_sent_status(
+        self,
+        article_hash: str,
+        status: str,
+        *,
+        translated_text: str | None = None,
+        sent_at: str | None = None,
+        importance_score: int | None = None,
+        importance_level: str | None = None,
+        rewritten_title_kk: str | None = None,
+        summary_kk: str | None = None,
+        betting_impact_kk: str | None = None,
+        team_impact_kk: str | None = None,
+    ) -> None:
         with self._connect() as connection:
             connection.execute(
                 """
@@ -140,10 +191,27 @@ class NewsRepository:
                 SET status = ?,
                     translated_text = COALESCE(?, translated_text),
                     sent_at = COALESCE(?, sent_at),
+                    importance_score = COALESCE(?, importance_score),
+                    importance_level = COALESCE(?, importance_level),
+                    rewritten_title_kk = COALESCE(?, rewritten_title_kk),
+                    summary_kk = COALESCE(?, summary_kk),
+                    betting_impact_kk = COALESCE(?, betting_impact_kk),
+                    team_impact_kk = COALESCE(?, team_impact_kk),
                     updated_at = CURRENT_TIMESTAMP
                 WHERE article_hash = ?
                 """,
-                (status, translated_text, sent_at, article_hash),
+                (
+                    status,
+                    translated_text,
+                    sent_at,
+                    importance_score,
+                    importance_level,
+                    rewritten_title_kk,
+                    summary_kk,
+                    betting_impact_kk,
+                    team_impact_kk,
+                    article_hash,
+                ),
             )
 
     def increment_daily_requests(self, usage_date: str | None = None, amount: int = 1) -> int:

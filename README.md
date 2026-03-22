@@ -1,17 +1,17 @@
 # FreeBeeBPT News Bot
 
-Telegram-бот получает спортивные новости из GNews, не показывает ссылку пользователю, сам извлекает полный текст статьи, переводит итоговый материал на казахский и отправляет текст с картинкой в Telegram.
+Telegram-бот получает спортивные новости из GNews, извлекает полный текст статьи, прогоняет материал через OpenAI-фильтр и отправляет в Telegram только короткую важную выжимку на казахском языке.
 
 ## Пайплайн
 
 1. Планировщик запускает цикл по `NEWS_POLL_MINUTES`.
-2. При `NEWS_TOPIC_ROTATION=true` за цикл проверяется только одна тема по кругу (`football`, `tennis`, `hockey`, `basketball`), чтобы стабильно держаться в лимите GNews.
+2. При `NEWS_TOPIC_ROTATION=true` за цикл проверяется только одна тема по кругу (`football`, `tennis`, `hockey`, `basketball`).
 3. Бот получает до `GNEWS_MAX_RESULTS` новостей из GNews.
-4. Перед парсингом страницы бот проверяет антидубль по `url`, а если URL нет — по `source_name + normalized_title`.
+4. Перед AI-обработкой бот проверяет антидубль по `url`, а если URL нет — по `source_name + normalized_title`.
 5. Для новой статьи бот пытается извлечь полный текст через `trafilatura`, затем через `readability-lxml + BeautifulSoup`, затем через простой HTML parse.
 6. Если полный текст короткий или недоступен, используется fallback из `content`, либо `title + description`.
-7. Итоговый текст переводится на казахский через OpenAI, а при ошибке отправляется оригинал.
-8. В Telegram уходит фото (если валидно) и текст без ссылки. Длинные статьи режутся на несколько сообщений.
+7. OpenAI возвращает строго JSON с фильтром важности, казахским summary, ключевыми тезисами и optional impact-блоками.
+8. Бот отправляет только новости с `importance_score >= NEWS_IMPORTANCE_MIN_SCORE` и `importance_level in {high, top}`.
 
 ## Новые переменные окружения
 
@@ -27,15 +27,14 @@ Telegram-бот получает спортивные новости из GNews,
 - `ARTICLE_EXTRACT_ENABLED=true`
 - `ARTICLE_EXTRACT_TIMEOUT=15`
 - `ARTICLE_MIN_TEXT_LENGTH=800`
-- `TRANSLATE_ENABLED=true`
-- `TRANSLATE_TARGET_LANG=kk`
-- `TRANSLATION_CHUNK_SIZE=3000`
 - `SEND_PHOTO_ENABLED=true`
-- `TELEGRAM_NEWS_CHAT_ID`
-- `TELEGRAM_DISABLE_LINKS=true`
 - `OPENAI_API_KEY`
+- `OPENAI_ENABLED=true`
+- `OPENAI_MODEL=gpt-5.4`
+- `NEWS_IMPORTANCE_MIN_SCORE=75`
 - `BOT_TOKEN`
 - `ADMIN_ID`
+- `TELEGRAM_NEWS_CHAT_ID`
 - `NEWS_POST_MODE=admin|channel`
 - `LOG_LEVEL`
 
@@ -45,16 +44,17 @@ Telegram-бот получает спортивные новости из GNews,
 - `/fetch_news_now`
 - `/fetch_topic football|tennis|hockey|basketball`
 - `/news_test`
+- `/news_test_ai`
+- `/news_test_raw`
+- `/news_test_compare`
 
 ## Основные модули
 
-- `services/news_fetcher.py` — запросы к GNews.
-- `services/article_extractor.py` — скачивание HTML, извлечение и очистка текста, fallback.
-- `services/translator.py` — перевод на казахский чанками.
-- `services/formatter.py` — сборка и разбиение Telegram-сообщений.
-- `services/dedup.py` — нормализация заголовка и hash для антидубля.
-- `services/news_repository.py` — SQLite-хранилище `news_sent` и счётчик API.
-- `services/news_pipeline.py` — orchestration пайплайна и отправка в Telegram.
+- `services/ai_news_processor.py` — OpenAI integration, retry, JSON validation через Pydantic.
+- `services/news_ranker.py` — порог важности и решение по отправке.
+- `services/telegram_formatter.py` — короткий Telegram-формат без сырого текста статьи.
+- `prompts/news_prompt.py` — system/user prompts для JSON-ответа.
+- `services/news_pipeline.py` — orchestration пайплайна и debug-команды.
 
 ## Локальный запуск
 

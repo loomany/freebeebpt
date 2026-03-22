@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-from services.formatter import format_news_message
-from services.translator import KazakhTranslator
+from services.ai_news_processor import AINewsResult
+from services.telegram_formatter import format_ai_news_message
 
 
 class NewsFormatter:
-    def __init__(self, client):
-        self.translator = KazakhTranslator(client=client)
-
-    async def format_post(self, article: dict) -> tuple[list[str], str]:
-        translated_text = await self.translator.translate_to_kazakh(article.get("final_text") or "")
-        return format_news_message(article, translated_text), translated_text
+    async def format_post(self, article: dict, ai_result: AINewsResult) -> tuple[list[str], str]:
+        messages = format_ai_news_message(article.get("topic", "news"), ai_result)
+        return messages, "\n\n".join(messages)
