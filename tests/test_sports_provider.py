@@ -5,7 +5,7 @@ from services.sports_provider import SportsProvider
 
 
 class SportsProviderFixtureSearchTests(unittest.IsolatedAsyncioTestCase):
-    async def test_find_fixture_uses_date_then_home_team_fallback(self):
+    async def test_find_fixture_uses_date_window_then_home_team_fallback(self):
         provider = SportsProvider(api_key="test")
         provider.search_team = AsyncMock(side_effect=[{"team": {"id": 1}}, {"team": {"id": 2}}])
         provider._get = AsyncMock(
@@ -21,10 +21,10 @@ class SportsProviderFixtureSearchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(provider._get.await_count, 2)
         first_call = provider._get.await_args_list[0]
         self.assertEqual(first_call.args, ("/fixtures",))
-        self.assertEqual(first_call.kwargs, {"date": "2026-03-28", "include": "league,teams,goals,fixture.status"})
+        self.assertEqual(first_call.kwargs, {"from": "2026-03-27", "to": "2026-03-29"})
         second_call = provider._get.await_args_list[1]
         self.assertEqual(second_call.args, ("/fixtures",))
-        self.assertEqual(second_call.kwargs, {"team": 1, "next": 10, "include": "league,teams,goals,fixture.status"})
+        self.assertEqual(second_call.kwargs, {"team": 1, "next": 10})
 
     async def test_find_fixture_returns_none_when_not_found(self):
         provider = SportsProvider(api_key="test")

@@ -6,7 +6,7 @@ import logging
 import os
 import urllib.parse
 import urllib.request
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.error import HTTPError, URLError
 
@@ -16,8 +16,6 @@ API_FOOTBALL_BASE_URL = os.getenv("SPORTS_API_BASE_URL", "https://v3.football.ap
 SPORTS_API_KEY = os.getenv("SPORTS_API_KEY")
 SPORTS_API_HOST = os.getenv("SPORTS_API_HOST", "v3.football.api-sports.io")
 SPORTS_API_PROVIDER = os.getenv("SPORTS_API_PROVIDER", "api-football")
-FIXTURE_INCLUDE_FIELDS = "league,teams,goals,fixture.status"
-
 if SPORTS_API_KEY is None or not SPORTS_API_KEY.strip():
     logger.error("SPORTS_API_KEY is missing or empty")
 
@@ -105,6 +103,15 @@ class SportsProvider:
         except ValueError:
             return raw_date[:10] if len(raw_date) >= 10 else None
 
+    @classmethod
+    def _build_fixture_date_window(cls, raw_date: str | None) -> tuple[str, str] | None:
+        match_date = cls._extract_date(raw_date)
+        if not match_date:
+            return None
+
+        center_date = datetime.fromisoformat(match_date).date()
+        return ((center_date - timedelta(days=1)).isoformat(), (center_date + timedelta(days=1)).isoformat())
+
     @staticmethod
     def _extract_datetime(raw_date: str | None) -> str:
         if not raw_date:
@@ -145,7 +152,7 @@ class SportsProvider:
         return match
 
     async def _search_fixture_by_team_fallback(self, primary_team_id: int, other_team_id: int) -> dict[str, Any] | None:
-        payload = await self._get("/fixtures", team=primary_team_id, next=10, include=FIXTURE_INCLUDE_FIELDS)
+        payload = await self._get("/fixtures", team=primary_team_id, next=10)
         return self._find_fixture_in_payload(primary_team_id, other_team_id, payload)
 
     async def find_fixture(self, home_team: str, away_team: str, date: str | None) -> dict[str, Any] | None:
@@ -164,10 +171,12 @@ class SportsProvider:
             logger.warning("❌ Матч не найден в API")
             return None
 
-        match_date = self._extract_date(date)
-        if match_date:
-            logger.info("[API] date=%s", match_date)
-            payload = await self._get("/fixtures", date=match_date, include=FIXTURE_INCLUDE_FIELDS)
+        date_window = self._build_fixture_date_window(date)
+        if date_window:
+            from_date, to_date = date_window
+            logger.info("[API] from=%s", from_date)
+            logger.info("[API] to=%s", to_date)
+            payload = await self._get("/fixtures", **{"from": from_date, "to": to_date})
             fixture = self._find_fixture_in_payload(home_team_id, away_team_id, payload)
             if fixture:
                 return fixture
@@ -219,6 +228,6 @@ class SportsProvider:
         return fixture.get("referee")
 
     async def debug_last_fixture(self, team_id: int = 33) -> dict[str, Any]:
-        payload = await self._get("/fixtures", team=team_id, next=10, include=FIXTURE_INCLUDE_FIELDS)
+        payload = await self._get("/fixtures", team=team_id, next=10)
         logger.info("[TEST API RAW JSON] %s", json.dumps(payload, ensure_ascii=False)[:3000])
         return payload
