@@ -1,148 +1,82 @@
+from __future__ import annotations
+
 import asyncio
 import logging
 import os
 
 from aiogram import Bot, Dispatcher, types
-from aiogram.types import CallbackQuery
 from aiogram.utils import executor
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
-from formatters.match_center_formatter import build_match_center_text
-from keyboards import analysis_cta_keyboard, topup_keyboard
-from services.match_data_service import MatchDataService
-from services.sports_provider import SportsProvider
+from handlers.admin_news import register_admin_news_handlers
+from scheduler.news_scheduler import run_hourly_news_scheduler
+from services.gnews_service import GNewsService
+from services.news_formatter import NewsFormatter
+from services.news_pipeline import NewsPipeline
+from services.news_repository import NewsRepository
 
 load_dotenv()
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+logger = logging.getLogger(__name__)
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ADMIN_ID_RAW = os.getenv("ADMIN_ID")
 ADMIN_ID = int(ADMIN_ID_RAW) if ADMIN_ID_RAW else None
+NEWS_CHANNEL_ID = os.getenv("NEWS_CHANNEL_ID")
+NEWS_POST_MODE = os.getenv("NEWS_POST_MODE", "admin")
+GNEWS_API_KEY = os.getenv("GNEWS_API_KEY")
+
+if not GNEWS_API_KEY:
+    logger.error("GNEWS_API_KEY не задан")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
-client = AsyncOpenAI(api_key=OPENAI_API_KEY)
-sports_provider = SportsProvider()
-match_data_service = MatchDataService(client, sports_provider)
-
-registered_users: set[int] = set()
-
-TOPUP_INFO_TEXT = (
-    "💼 Как пополнять счёт с выгодой?\n\n"
-    "Теперь ты можешь пополнить счёт — безопасно и с кешбэком 💸\n\n"
-    "• Кешбэк до 5%\n\n"
-    "🔒 100% легально и проверено пользователями\n"
-    "💸 Кешбэк возвращается талонами на бензин\n\n"
-    "📲 Нажми ниже, если хочешь пополнить — и получить кешбэк"
+client = AsyncOpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+repository = NewsRepository()
+gnews_service = GNewsService(repository=repository, api_key=GNEWS_API_KEY)
+formatter = NewsFormatter(client=client)
+news_pipeline = NewsPipeline(
+    bot=bot,
+    repository=repository,
+    gnews_service=gnews_service,
+    formatter=formatter,
+    admin_id=ADMIN_ID,
+    news_channel_id=NEWS_CHANNEL_ID,
+    news_post_mode=NEWS_POST_MODE,
 )
 
-TOPUP_START_TEXT = (
-    "Напишите сумму, букмекера и удобный способ оплаты, "
-    "и мы подскажем, как пополнить счёт с кешбэком."
+register_admin_news_handlers(
+    dp,
+    context={
+        "repository": repository,
+        "gnews_service": gnews_service,
+        "formatter": formatter,
+        "news_pipeline": news_pipeline,
+        "news_post_mode": NEWS_POST_MODE,
+    },
 )
 
 
 @dp.message_handler(commands=["start"])
 async def start_handler(message: types.Message):
-    user = message.from_user
-
-    if user.id not in registered_users:
-        registered_users.add(user.id)
-        text = (
-            "📥 Новый пользователь зарегистрировался!\n\n"
-            f"👤 Имя: {user.first_name or ''} {user.last_name or ''}\n"
-            f"🆔 ID: {user.id}\n"
-            f"💬 Username: @{user.username or '—'}\n"
-            f"🌍 Язык: {user.language_code or 'неизвестен'}"
-        )
-        if ADMIN_ID is not None:
-            await bot.send_message(chat_id=ADMIN_ID, text=text)
-
     await message.answer(
-        "🤖 Добро пожаловать! Я ИИ-бот для глубокого разбора матчей.\n"
-        "Отправь название матча или скриншот — и я подготовлю структурированный Match Center без ставок и коэффициентов. ⚽📊"
+        "Привет! Это спортивный новостной бот.\n"
+        "Доступные админ-команды: /news_status, /fetch_news_now, /fetch_topic, /test_news_format"
     )
 
 
-@dp.callback_query_handler(lambda c: c.data == "cashback_topup")
-async def cashback_topup_handler(callback_query: CallbackQuery):
-    await callback_query.answer()
-    await callback_query.message.answer(TOPUP_INFO_TEXT, reply_markup=topup_keyboard())
-
-
-@dp.callback_query_handler(lambda c: c.data == "start_topup")
-async def start_topup_handler(callback_query: CallbackQuery):
-    await callback_query.answer()
-    await callback_query.message.answer(TOPUP_START_TEXT)
-
-
-
-
-@dp.message_handler(commands=["test_api"])
-async def test_api_handler(message: types.Message):
-    await message.answer("🧪 Проверяю подключение к API-Football и диагностирую поиск матча...")
-    try:
-        status_payload = await sports_provider.check_api_status()
-        debug_payload = await sports_provider.debug_fixture_lookup(
-            home_team="Stockport County",
-            away_team="AFC Wimbledon",
-            date="2026-03-28T20:00:00",
-        )
-        await message.answer(
-            "✅ API-Football отвечает.\n"
-            f"status entries: {len(status_payload.get('response') or [])}\n\n"
-            "1. /teams?search=Stockport County\n"
-            f"{debug_payload['teams_search']['Stockport County']}\n\n"
-            "2. /teams?search=AFC Wimbledon\n"
-            f"{debug_payload['teams_search']['AFC Wimbledon']}\n\n"
-            "3. selected team ids\n"
-            f"{debug_payload['selected_team_ids']}\n\n"
-            "4. /fixtures request\n"
-            f"{debug_payload['fixtures_request']}\n\n"
-            "5. fixtures count\n"
-            f"{debug_payload['fixtures_count']}\n\n"
-            "6. first 10 fixtures\n"
-            f"{debug_payload['first_10_fixtures']}\n\n"
-            "7. comparisons\n"
-            f"{debug_payload['comparisons']}\n\n"
-            "8. found match\n"
-            f"{debug_payload['found_match']}\n\n"
-            "Причина\n"
-            f"{debug_payload['reason']}"
-        )
-    except Exception as error:
-        logging.exception("/test_api failed")
-        await message.answer(f"❌ /test_api error: {error}")
-
-@dp.message_handler(content_types=[types.ContentType.TEXT, types.ContentType.PHOTO])
-async def handle_input(message: types.Message):
-    await message.answer("🧠 Собираю расширенный анализ матча...")
-
-    try:
-        match_info = await match_data_service.resolve_match_from_image(message)
-        if not match_info or not match_info.get("home_team") or not match_info.get("away_team"):
-            await message.answer(
-                "Не удалось распознать матч на скрине. Попробуйте отправить более четкий скрин, где видны команды и время матча."
-            )
-            return
-
-        match_data = await match_data_service.get_match_full_data(match_info)
-        result = build_match_center_text(match_data)
-        await message.answer(result, reply_markup=analysis_cta_keyboard())
-
-    except Exception as error:
-        await message.answer(
-            "Не удалось распознать матч на скрине. Попробуйте отправить более четкий скрин, где видны команды и время матча."
-        )
-        print("Match analysis error:", error)
+async def on_startup(_: Dispatcher) -> None:
+    asyncio.create_task(run_hourly_news_scheduler(news_pipeline))
 
 
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
     try:
-        executor.start_polling(dp, skip_updates=True)
+        executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
     finally:
         loop.run_until_complete(bot.session.close())
-        loop.run_until_complete(client.aclose())
+        if client:
+            loop.run_until_complete(client.close())
         loop.close()
