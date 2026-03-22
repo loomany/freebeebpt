@@ -1,13 +1,15 @@
-import os
-import base64
-from io import BytesIO
-from aiogram import Bot, Dispatcher, types
-from aiogram.utils import executor
-from aiogram.utils.markdown import bold
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from dotenv import load_dotenv
 import asyncio
+import os
+
+from aiogram import Bot, Dispatcher, types
+from aiogram.types import CallbackQuery
+from aiogram.utils import executor
+from dotenv import load_dotenv
 from openai import AsyncOpenAI
+
+from formatters.match_center_formatter import build_match_center_text
+from keyboards import analysis_cta_keyboard, topup_keyboard
+from services.match_data_service import MatchDataService
 
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -18,38 +20,25 @@ ADMIN_ID = int(ADMIN_ID_RAW) if ADMIN_ID_RAW else None
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+match_data_service = MatchDataService(client)
 
 registered_users: set[int] = set()
 
-# 🔹 Отправка разбитого текста + кешбэк только в конце
-async def split_and_send_with_cashback(full_text: str, message: types.Message):
-    max_length = 4000
+TOPUP_INFO_TEXT = (
+    "💼 Как пополнять счёт с выгодой?\n\n"
+    "Теперь ты можешь пополнить счёт — безопасно и с кешбэком 💸\n\n"
+    "• Кешбэк до 5%\n\n"
+    "🔒 100% легально и проверено пользователями\n"
+    "💸 Кешбэк возвращается талонами на бензин\n\n"
+    "📲 Нажми ниже, если хочешь пополнить — и получить кешбэк"
+)
 
-    cashback_text = (
-        "\n\n💼 *Как пополнять счёт с выгодой?*\n\n"
-        "Теперь ты можешь пополнить счёт в своём букмекерском аккаунте — *безопасно и с кешбэком* 💸\n\n"
-        "Сервис **Paydala & Freebee** работает через официальные платёжные каналы и поддерживает:\n\n"
-        "• Olimpbet\n• 1xBet\n• Parimatch\n• Fonbet\n\n"
-        "🔒 *100% легально и проверено пользователями*\n"
-        "💸 Кешбэк возвращается на карту или логин\n\n"
-        "📎 При желании, можем выдать реквизиты, схемы и партнёрский номер\n\n"
-        "📲 Нажми ниже, чтобы узнать подробнее"
-    )
+TOPUP_START_TEXT = (
+    "Напишите сумму, букмекера и удобный способ оплаты, "
+    "и мы подскажем, как пополнить счёт с кешбэком."
+)
 
-    keyboard = types.InlineKeyboardMarkup()
-    keyboard.add(
-        types.InlineKeyboardButton("💬 Узнать подробнее", url="https://t.me/freebee_admin")
-    )
 
-    chunks = [full_text[i:i + max_length] for i in range(0, len(full_text), max_length)]
-
-    for i, chunk in enumerate(chunks):
-        if i == len(chunks) - 1:
-            await message.answer(chunk + cashback_text, reply_markup=keyboard, parse_mode="Markdown")
-        else:
-            await message.answer(chunk)
-
-# /start + регистрация
 @dp.message_handler(commands=["start"])
 async def start_handler(message: types.Message):
     user = message.from_user
@@ -68,94 +57,44 @@ async def start_handler(message: types.Message):
 
     await message.answer(
         "🤖 Добро пожаловать! Я ИИ-бот для глубокого разбора матчей.\n"
-        "Отправь название матча или скриншот — и я подготовлю развёрнутую аналитику как статью. ⚽📊🔥"
+        "Отправь название матча или скриншот — и я подготовлю структурированный Match Center без ставок и коэффициентов. ⚽📊"
     )
 
-# Анализ текста или фото
+
+@dp.callback_query_handler(lambda c: c.data == "cashback_topup")
+async def cashback_topup_handler(callback_query: CallbackQuery):
+    await callback_query.answer()
+    await callback_query.message.answer(TOPUP_INFO_TEXT, reply_markup=topup_keyboard())
+
+
+@dp.callback_query_handler(lambda c: c.data == "start_topup")
+async def start_topup_handler(callback_query: CallbackQuery):
+    await callback_query.answer()
+    await callback_query.message.answer(TOPUP_START_TEXT)
+
+
 @dp.message_handler(content_types=[types.ContentType.TEXT, types.ContentType.PHOTO])
 async def handle_input(message: types.Message):
-    await message.answer("🧠 Запускаю расширенный анализ...")
-
-    user_text = (message.caption or message.text or "").strip()
-    user_content = []
-
-    if user_text:
-        user_content.append({"type": "text", "text": (
-            f"Пользователь прислал матч: \"{user_text}\".\n\n"
-            f"Сделай аналитическую статью:\n"
-            f"1. Кто играет, дата, турнир\n"
-            f"2. Форма команд (последние 5 игр)\n"
-            f"3. Очные встречи, стиль, мотивация\n"
-            f"4. Составы, травмы\n"
-            f"5. Линия: что говорят коэффициенты\n"
-            f"6. 💬 Итог: кого бы ты выбрал лично\n"
-            f"7. 🎯 Исход (например: П1, Тотал Больше 2.5, ОЗ)\n"
-            f"8. Заключение — стоит ли играть, и с каким риском\n\n"
-            f"Формат — как спортивная статья. Стиль уверенный. Используй ⚽📊🔥."
-        )})
-
-    if message.photo:
-        photo = message.photo[-1]
-        buffer = BytesIO()
-        await photo.download(destination=buffer)
-        buffer.seek(0)
-        img_b64 = base64.b64encode(buffer.read()).decode()
-        user_content.append({
-            "type": "image_url",
-            "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}
-        })
-
-    messages = [
-        {
-            "role": "system",
-            "content": "Ты спортивный аналитик. Пиши как для блога: уверенно, с выводами, ставкой и рекомендацией."
-        },
-        {
-            "role": "user",
-            "content": user_content
-        }
-    ]
+    await message.answer("🧠 Собираю расширенный анализ матча...")
 
     try:
-        response = await client.chat.completions.create(
-            model="gpt-4o",
-            messages=messages,
-            temperature=1.3,
-            max_tokens=2000
+        match_info = await match_data_service.resolve_match_from_image(message)
+        if not match_info or not match_info.get("home_team") or not match_info.get("away_team"):
+            await message.answer(
+                "Не удалось распознать матч на скрине. Попробуйте отправить более четкий скрин, где видны команды и время матча."
+            )
+            return
+
+        match_data = await match_data_service.get_match_full_data(match_info)
+        result = build_match_center_text(match_data)
+        await message.answer(result, reply_markup=analysis_cta_keyboard())
+
+    except Exception as error:
+        await message.answer(
+            "Не удалось распознать матч на скрине. Попробуйте отправить более четкий скрин, где видны команды и время матча."
         )
-        result = response.choices[0].message.content
-        chunks = [result[i:i+4096] for i in range(0, len(result), 4096)]
-        for chunk in chunks:
-            await message.answer(chunk)
+        print("Match analysis error:", error)
 
-        await send_topup_offer(message)
-
-    except Exception as e:
-        await message.answer("❌ Ошибка при анализе.")
-        await message.answer(f"📛 Детали: {e}")
-        print("OpenAI error:", e)
-
-
-async def send_topup_offer(message: types.Message):
-    offer_text = (
-        "💼 *Как пополнять счёт с выгодой?*\n\n"
-        "Теперь ты можешь пополнить счёт в своём букмекерском аккаунте — *безопасно и с кешбэком* 💸\n\n"
-        "Сервис **Paydala & Freebee** работает через официальные платёжные каналы и поддерживает:\n\n"
-        "• *Olimpbet*  **+ 5% Кешбэк**\n"
-        "• *1xBet*  **+ 5% Кешбэк**\n"
-        "• *Parimatch*  **+ 5% Кешбэк**\n"
-        "• *Fonbet*  **+ 5% Кешбэк**\n\n"
-        "🔒 *100% легально и проверено пользователями*\n"
-        "💸 Кешбэк возвращается на карту или логин\n\n"
-        "📎 При желании, можем выдать реквизиты, схемы и *талон ИП*\n\n"
-        "📲 Нажми ниже, если хочешь пополнить — и получить кешбэк"
-    )
-
-    keyboard = InlineKeyboardMarkup()
-    keyboard.add(
-        InlineKeyboardButton("💬 Узнать подробнее", url="https://t.me/loomany")
-    )
-    await message.answer(offer_text, parse_mode="Markdown", reply_markup=keyboard)
 
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()

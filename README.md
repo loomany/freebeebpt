@@ -1,6 +1,6 @@
 # FreeBeeBPT Bot
 
-FreeBeeBPT is a Telegram bot built with aiogram and OpenAI. It provides sports predictions when users send match text or screenshots.
+FreeBeeBPT is a Telegram bot built with aiogram and OpenAI. It provides structured football Match Center analysis when users send match text or screenshots, and offers a cashback top-up CTA via inline buttons.
 
 ## Installation
 
