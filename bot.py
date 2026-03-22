@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 
 from aiogram import Bot, Dispatcher, types
@@ -10,8 +11,10 @@ from openai import AsyncOpenAI
 from formatters.match_center_formatter import build_match_center_text
 from keyboards import analysis_cta_keyboard, topup_keyboard
 from services.match_data_service import MatchDataService
+from services.sports_provider import SportsProvider
 
 load_dotenv()
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ADMIN_ID_RAW = os.getenv("ADMIN_ID")
@@ -20,7 +23,8 @@ ADMIN_ID = int(ADMIN_ID_RAW) if ADMIN_ID_RAW else None
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 client = AsyncOpenAI(api_key=OPENAI_API_KEY)
-match_data_service = MatchDataService(client)
+sports_provider = SportsProvider()
+match_data_service = MatchDataService(client, sports_provider)
 
 registered_users: set[int] = set()
 

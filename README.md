@@ -1,6 +1,6 @@
 # FreeBeeBPT Bot
 
-FreeBeeBPT is a Telegram bot built with aiogram and OpenAI. It provides structured football Match Center analysis when users send match text or screenshots, and offers a cashback top-up CTA via inline buttons.
+FreeBeeBPT is a Telegram bot built with aiogram, OpenAI, and a real football data provider. OpenAI is used only to recognize a match from a screenshot/text and optionally normalize names, while factual Match Center blocks are filled from sports API data.
 
 ## Installation
 
@@ -14,8 +14,13 @@ FreeBeeBPT is a Telegram bot built with aiogram and OpenAI. It provides structur
 ### Environment variables
 
 - `BOT_TOKEN` – Telegram bot token.
-- `OPENAI_API_KEY` – your OpenAI API key.
+- `OPENAI_API_KEY` – your OpenAI API key for screenshot/text match recognition only.
+- `SPORTS_API_KEY` – API-Football / API-Sports key for real match data.
+- `SPORTS_API_HOST` – API host, defaults to `v3.football.api-sports.io`.
+- `SPORTS_API_PROVIDER` – provider label used in logs/output, defaults to `api-football`.
+- `SPORTS_API_BASE_URL` – provider base URL, defaults to `https://v3.football.api-sports.io`.
 - `ADMIN_ID` – optional Telegram ID for registration notifications; if omitted, the bot skips admin alerts.
+- `LOG_LEVEL` – Python logging level, defaults to `INFO`.
 
 ## Usage
 
@@ -31,3 +36,11 @@ python bot.py
 docker build -t freebeebpt .
 docker run --env-file .env freebeebpt
 ```
+
+
+## Data source architecture
+
+- `ALLOW_LLM_FOR_FACTS = False` in `services/match_data_service.py` explicitly forbids LLM-generated factual blocks.
+- `services/sports_provider.py` integrates API-Football-compatible endpoints for fixtures, standings, lineups, injuries, H2H, form, team stats, match context, and referee.
+- If an API block is unavailable, Match Center uses deterministic fallbacks such as `Составы уточняются`, `Данные по судье уточняются`, `Недостаточно данных`, and `Существенных потерь не выявлено`.
+- Runtime logs report factual block coverage, for example: `[DATA SOURCE] standings: API` or `[DATA SOURCE] cards: MISSING`.
