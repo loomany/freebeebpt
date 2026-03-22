@@ -8,6 +8,7 @@ import urllib.parse
 import urllib.request
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.error import HTTPError, URLError
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +17,9 @@ SPORTS_API_KEY = os.getenv("SPORTS_API_KEY")
 SPORTS_API_HOST = os.getenv("SPORTS_API_HOST", "v3.football.api-sports.io")
 SPORTS_API_PROVIDER = os.getenv("SPORTS_API_PROVIDER", "api-football")
 
+if SPORTS_API_KEY is None or not SPORTS_API_KEY.strip():
+    logger.error("SPORTS_API_KEY is missing or empty")
+
 
 class SportsProviderError(RuntimeError):
     pass
@@ -23,16 +27,30 @@ class SportsProviderError(RuntimeError):
 
 class SportsProvider:
     def __init__(self, api_key: str | None = None, base_url: str = API_FOOTBALL_BASE_URL, provider_name: str = SPORTS_API_PROVIDER):
-        self.api_key = api_key or SPORTS_API_KEY
+        env_api_key = api_key if api_key is not None else os.getenv("SPORTS_API_KEY")
+        self.api_key = env_api_key.strip() if isinstance(env_api_key, str) else None
         self.base_url = base_url.rstrip("/")
         self.provider_name = provider_name
+        self.last_api_call_attempted = False
+
+        if self.api_key is None or not self.api_key:
+            logger.error("SPORTS_API_KEY is missing or empty")
 
     @property
     def enabled(self) -> bool:
         return bool(self.api_key)
 
+    def _build_headers(self) -> dict[str, str]:
+        return {
+            "x-apisports-key": self.api_key or "",
+        }
+
+    def _truncate_body_for_log(self, body: str) -> str:
+        return body[:300]
+
     async def _get(self, path: str, **params: Any) -> dict[str, Any]:
         if not self.api_key:
+            logger.error("SPORTS_API_KEY is missing or empty")
             raise SportsProviderError("SPORTS_API_KEY is not configured")
 
         query = urllib.parse.urlencode({k: v for k, v in params.items() if v is not None and v != ""})
@@ -40,22 +58,37 @@ class SportsProvider:
         if query:
             url = f"{url}?{query}"
 
+        logger.info("[API REQUEST] %s params=%s", path, params)
+        self.last_api_call_attempted = True
+
         def _request() -> dict[str, Any]:
-            request = urllib.request.Request(
-                url,
-                headers={
-                    "x-apisports-key": self.api_key,
-                    "x-rapidapi-key": self.api_key,
-                    "x-rapidapi-host": SPORTS_API_HOST,
-                },
-            )
+            request = urllib.request.Request(url, headers=self._build_headers())
             try:
                 with urllib.request.urlopen(request, timeout=20) as response:
-                    return json.loads(response.read().decode("utf-8"))
+                    status_code = getattr(response, "status", response.getcode())
+                    body = response.read().decode("utf-8")
+                    logger.info("[API RESPONSE STATUS] %s", status_code)
+                    logger.info("[API RESPONSE BODY] %s", self._truncate_body_for_log(body))
+                    return json.loads(body)
+            except HTTPError as error:
+                error_body = error.read().decode("utf-8", errors="replace")
+                logger.error("[API RESPONSE STATUS] %s", error.code)
+                logger.error("[API RESPONSE BODY] %s", self._truncate_body_for_log(error_body))
+                raise SportsProviderError(f"Request failed for {path}: HTTP {error.code} - {error_body}") from error
+            except URLError as error:
+                logger.error("[API RESPONSE STATUS] network-error")
+                logger.error("[API RESPONSE BODY] %s", error)
+                raise SportsProviderError(f"Request failed for {path}: {error}") from error
             except Exception as error:  # noqa: BLE001
+                logger.error("[API RESPONSE STATUS] unexpected-error")
+                logger.error("[API RESPONSE BODY] %s", error)
                 raise SportsProviderError(f"Request failed for {path}: {error}") from error
 
         return await asyncio.to_thread(_request)
+
+    async def check_api_status(self) -> dict[str, Any]:
+        payload = await self._get("/status")
+        return payload
 
     @staticmethod
     def _normalize_name(name: str | None) -> str:
@@ -93,9 +126,11 @@ class SportsProvider:
         return response[0] if response else None
 
     async def find_fixture(self, home_team: str, away_team: str, date: str | None) -> dict[str, Any] | None:
+        logger.info("[FIND FIXTURE] home_team=%s away_team=%s match_date=%s", home_team, away_team, date)
         home_team_data = await self.search_team(home_team)
         away_team_data = await self.search_team(away_team)
         if not home_team_data or not away_team_data:
+            logger.warning("[API WARNING] fixture not found")
             return None
 
         home_team_id = home_team_data["team"]["id"]
@@ -119,6 +154,7 @@ class SportsProvider:
                 normalized_away = self._normalize_name(away.get("name"))
                 if normalized_home == self._normalize_name(home_team) and normalized_away == self._normalize_name(away_team):
                     return fixture
+        logger.warning("[API WARNING] fixture not found")
         return None
 
     async def get_standings(self, league_id: int, season: int) -> list[dict[str, Any]]:
@@ -159,3 +195,8 @@ class SportsProvider:
         context = await self.get_match_context(fixture_id)
         fixture = context.get("fixture") or {}
         return fixture.get("referee")
+
+    async def debug_last_fixture(self, team_id: int = 33) -> dict[str, Any]:
+        payload = await self._get("/fixtures", team=team_id, last=1)
+        logger.info("[TEST API RAW JSON] %s", json.dumps(payload, ensure_ascii=False)[:3000])
+        return payload

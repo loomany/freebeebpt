@@ -30,6 +30,11 @@ FreeBeeBPT is a Telegram bot built with aiogram, OpenAI, and a real football dat
 python bot.py
 ```
 
+### Debugging API-Football
+
+- Use the Telegram command `/test_api` to call `/status` and `/fixtures?team=33&last=1`.
+- Runtime logs now include `[API REQUEST]`, `[API RESPONSE STATUS]`, `[API RESPONSE BODY]`, `[FIND FIXTURE]`, `[API WARNING] fixture not found`, and `[DATA SOURCE] ... = OK/EMPTY`.
+
 ### Docker
 
 ```bash
@@ -43,4 +48,4 @@ docker run --env-file .env freebeebpt
 - `ALLOW_LLM_FOR_FACTS = False` in `services/match_data_service.py` explicitly forbids LLM-generated factual blocks.
 - `services/sports_provider.py` integrates API-Football-compatible endpoints for fixtures, standings, lineups, injuries, H2H, form, team stats, match context, and referee.
 - If an API block is unavailable, Match Center uses deterministic fallbacks such as `Составы уточняются`, `Данные по судье уточняются`, `Недостаточно данных`, and `Существенных потерь не выявлено`.
-- Runtime logs report factual block coverage, for example: `[DATA SOURCE] standings: API` or `[DATA SOURCE] cards: MISSING`.
+- Runtime logs report factual block coverage, for example: `[DATA SOURCE] standings = OK` or `[DATA SOURCE] cards = EMPTY`.

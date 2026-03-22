@@ -77,6 +77,23 @@ async def start_topup_handler(callback_query: CallbackQuery):
     await callback_query.message.answer(TOPUP_START_TEXT)
 
 
+
+
+@dp.message_handler(commands=["test_api"])
+async def test_api_handler(message: types.Message):
+    await message.answer("🧪 Проверяю подключение к API-Football...")
+    try:
+        status_payload = await sports_provider.check_api_status()
+        debug_payload = await sports_provider.debug_last_fixture(team_id=33)
+        await message.answer(
+            "✅ API-Football отвечает. "
+            f"status entries: {len(status_payload.get('response') or [])}, "
+            f"fixtures entries: {len(debug_payload.get('response') or [])}."
+        )
+    except Exception as error:
+        logging.exception("/test_api failed")
+        await message.answer(f"❌ /test_api error: {error}")
+
 @dp.message_handler(content_types=[types.ContentType.TEXT, types.ContentType.PHOTO])
 async def handle_input(message: types.Message):
     await message.answer("🧠 Собираю расширенный анализ матча...")
