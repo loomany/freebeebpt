@@ -128,6 +128,41 @@ class SportsProvider:
             return "нет данных"
         return f"{float(value):.2f}".rstrip("0").rstrip(".")
 
+    @staticmethod
+    def _serialize_team_search_result(team_name: str, team_data: dict[str, Any] | None) -> dict[str, Any]:
+        team = (team_data or {}).get("team") or {}
+        venue = (team_data or {}).get("venue") or {}
+        return {
+            "search": team_name,
+            "team": {
+                "id": team.get("id"),
+                "name": team.get("name"),
+                "code": team.get("code"),
+                "country": team.get("country"),
+                "founded": team.get("founded"),
+            },
+            "venue": {
+                "id": venue.get("id"),
+                "name": venue.get("name"),
+                "city": venue.get("city"),
+            },
+        }
+
+    @staticmethod
+    def _serialize_fixture_brief(fixture: dict[str, Any]) -> dict[str, Any]:
+        fixture_data = fixture.get("fixture") or {}
+        teams = fixture.get("teams") or {}
+        home = teams.get("home") or {}
+        away = teams.get("away") or {}
+        return {
+            "fixture.id": fixture_data.get("id"),
+            "fixture.date": fixture_data.get("date"),
+            "home.id": home.get("id"),
+            "home.name": home.get("name"),
+            "away.id": away.get("id"),
+            "away.name": away.get("name"),
+        }
+
     async def search_team(self, team_name: str) -> dict[str, Any] | None:
         payload = await self._get("/teams", search=team_name)
         response = payload.get("response") or []
@@ -150,6 +185,110 @@ class SportsProvider:
         match = next((fixture for fixture in fixtures if self._fixture_matches_team_ids(fixture, team1_id, team2_id)), None)
         logger.info("[API] found match=%s", "YES" if match else "NO")
         return match
+
+    def _build_debug_reason(
+        self,
+        *,
+        team1_id: int | None,
+        team2_id: int | None,
+        fixtures: list[dict[str, Any]],
+        match_found: bool,
+        date_window_used: bool,
+    ) -> str:
+        if team1_id is None or team2_id is None:
+            return "wrong team_id"
+        if not date_window_used:
+            return "wrong date range"
+        if match_found:
+            return "match found"
+        if not fixtures:
+            return "no fixture in API"
+        return "wrong comparison"
+
+    async def debug_fixture_lookup(self, home_team: str, away_team: str, date: str | None) -> dict[str, Any]:
+        logger.info("[FIND FIXTURE] home_team=%s away_team=%s match_date=%s", home_team, away_team, date)
+
+        team1_payload = await self._get("/teams", search=home_team)
+        team2_payload = await self._get("/teams", search=away_team)
+        team1_response = team1_payload.get("response") or []
+        team2_response = team2_payload.get("response") or []
+        team1_data = team1_response[0] if team1_response else None
+        team2_data = team2_response[0] if team2_response else None
+        team1_id = ((team1_data or {}).get("team") or {}).get("id")
+        team2_id = ((team2_data or {}).get("team") or {}).get("id")
+
+        serialized_team1 = self._serialize_team_search_result(home_team, team1_data)
+        serialized_team2 = self._serialize_team_search_result(away_team, team2_data)
+        logger.info("[DEBUG FIXTURE] /teams?search=%s => %s", home_team, json.dumps(serialized_team1, ensure_ascii=False))
+        logger.info("[DEBUG FIXTURE] /teams?search=%s => %s", away_team, json.dumps(serialized_team2, ensure_ascii=False))
+        logger.info("[DEBUG FIXTURE] selected team1_id=%s team2_id=%s", team1_id, team2_id)
+
+        date_window = self._build_fixture_date_window(date)
+        fixtures_payload: dict[str, Any] = {"response": []}
+        fixtures: list[dict[str, Any]] = []
+        first_ten: list[dict[str, Any]] = []
+        comparisons: list[str] = []
+        match: dict[str, Any] | None = None
+
+        if date_window:
+            from_date, to_date = date_window
+            logger.info("[DEBUG FIXTURE] /fixtures?from=%s&to=%s", from_date, to_date)
+            fixtures_payload = await self._get("/fixtures", **{"from": from_date, "to": to_date})
+            fixtures = fixtures_payload.get("response") or []
+            logger.info("[DEBUG FIXTURE] raw fixtures result => %s", json.dumps(fixtures_payload, ensure_ascii=False)[:3000])
+            logger.info("[API] fixtures count=%s", len(fixtures))
+            first_ten = [self._serialize_fixture_brief(fixture) for fixture in fixtures[:10]]
+            for fixture in fixtures:
+                brief = self._serialize_fixture_brief(fixture)
+                comparison = (
+                    f"comparing fixture {brief['fixture.id']} with team1_id={team1_id}/team2_id={team2_id} "
+                    f"=> home.id={brief['home.id']} away.id={brief['away.id']}"
+                )
+                comparisons.append(comparison)
+                logger.info("[DEBUG FIXTURE] %s", comparison)
+                if team1_id is not None and team2_id is not None and self._fixture_matches_team_ids(fixture, team1_id, team2_id):
+                    match = fixture
+                    break
+            logger.info("[API] found match=%s", "YES" if match else "NO")
+        else:
+            from_date = None
+            to_date = None
+            logger.info("[DEBUG FIXTURE] no valid date window for raw date=%s", date)
+            logger.info("[API] fixtures count=%s", len(fixtures))
+            logger.info("[API] found match=NO")
+
+        reason = self._build_debug_reason(
+            team1_id=team1_id,
+            team2_id=team2_id,
+            fixtures=fixtures,
+            match_found=match is not None,
+            date_window_used=date_window is not None,
+        )
+        logger.info("[DEBUG FIXTURE] reason=%s", reason)
+
+        return {
+            "home_team": home_team,
+            "away_team": away_team,
+            "date": date,
+            "teams_search": {
+                home_team: serialized_team1,
+                away_team: serialized_team2,
+            },
+            "selected_team_ids": {
+                "team1_id": team1_id,
+                "team2_id": team2_id,
+            },
+            "fixtures_request": {
+                "from": from_date,
+                "to": to_date,
+            },
+            "fixtures_payload": fixtures_payload,
+            "fixtures_count": len(fixtures),
+            "first_10_fixtures": first_ten,
+            "comparisons": comparisons,
+            "found_match": "YES" if match else "NO",
+            "reason": reason,
+        }
 
     async def _search_fixture_by_team_fallback(self, primary_team_id: int, other_team_id: int) -> dict[str, Any] | None:
         payload = await self._get("/fixtures", team=primary_team_id, next=10)

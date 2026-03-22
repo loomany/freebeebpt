@@ -81,14 +81,35 @@ async def start_topup_handler(callback_query: CallbackQuery):
 
 @dp.message_handler(commands=["test_api"])
 async def test_api_handler(message: types.Message):
-    await message.answer("🧪 Проверяю подключение к API-Football...")
+    await message.answer("🧪 Проверяю подключение к API-Football и диагностирую поиск матча...")
     try:
         status_payload = await sports_provider.check_api_status()
-        debug_payload = await sports_provider.debug_last_fixture(team_id=33)
+        debug_payload = await sports_provider.debug_fixture_lookup(
+            home_team="Stockport County",
+            away_team="AFC Wimbledon",
+            date="2026-03-28T20:00:00",
+        )
         await message.answer(
-            "✅ API-Football отвечает. "
-            f"status entries: {len(status_payload.get('response') or [])}, "
-            f"fixtures entries: {len(debug_payload.get('response') or [])}."
+            "✅ API-Football отвечает.\n"
+            f"status entries: {len(status_payload.get('response') or [])}\n\n"
+            "1. /teams?search=Stockport County\n"
+            f"{debug_payload['teams_search']['Stockport County']}\n\n"
+            "2. /teams?search=AFC Wimbledon\n"
+            f"{debug_payload['teams_search']['AFC Wimbledon']}\n\n"
+            "3. selected team ids\n"
+            f"{debug_payload['selected_team_ids']}\n\n"
+            "4. /fixtures request\n"
+            f"{debug_payload['fixtures_request']}\n\n"
+            "5. fixtures count\n"
+            f"{debug_payload['fixtures_count']}\n\n"
+            "6. first 10 fixtures\n"
+            f"{debug_payload['first_10_fixtures']}\n\n"
+            "7. comparisons\n"
+            f"{debug_payload['comparisons']}\n\n"
+            "8. found match\n"
+            f"{debug_payload['found_match']}\n\n"
+            "Причина\n"
+            f"{debug_payload['reason']}"
         )
     except Exception as error:
         logging.exception("/test_api failed")
