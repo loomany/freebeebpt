@@ -11,7 +11,7 @@ from openai import AsyncOpenAI
 from formatters.match_center_formatter import build_match_center_text
 from keyboards import analysis_cta_keyboard, topup_keyboard
 from services.match_data_service import MatchDataService
-from services.web_match_provider import WebMatchProvider
+from services.sports_provider import SportsProvider
 
 load_dotenv()
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -23,8 +23,8 @@ ADMIN_ID = int(ADMIN_ID_RAW) if ADMIN_ID_RAW else None
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 client = AsyncOpenAI(api_key=OPENAI_API_KEY)
-web_match_provider = WebMatchProvider(client)
-match_data_service = MatchDataService(client, web_match_provider)
+sports_provider = SportsProvider()
+match_data_service = MatchDataService(client, sports_provider)
 
 registered_users: set[int] = set()
 
@@ -85,7 +85,7 @@ async def handle_input(message: types.Message):
         match_info = await match_data_service.resolve_match_from_image(message)
         if not match_info or not match_info.get("home_team") or not match_info.get("away_team"):
             await message.answer(
-                "Не удалось найти достаточно данных по этому матчу. Попробуйте отправить более четкий скрин, где видны команды, лига и время матча."
+                "Не удалось распознать матч на скрине. Попробуйте отправить более четкий скрин, где видны команды и время матча."
             )
             return
 
@@ -95,7 +95,7 @@ async def handle_input(message: types.Message):
 
     except Exception as error:
         await message.answer(
-            "Не удалось найти достаточно данных по этому матчу. Попробуйте отправить более четкий скрин, где видны команды, лига и время матча."
+            "Не удалось распознать матч на скрине. Попробуйте отправить более четкий скрин, где видны команды и время матча."
         )
         print("Match analysis error:", error)
 

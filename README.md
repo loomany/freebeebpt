@@ -1,45 +1,46 @@
-# FreeBeeBPT Match Center Bot
+# FreeBeeBPT Bot
 
-Telegram-бот для структурированного Match Center без ставок и коэффициентов.
+FreeBeeBPT is a Telegram bot built with aiogram, OpenAI, and a real football data provider. OpenAI is used only to recognize a match from a screenshot/text and optionally normalize names, while factual Match Center blocks are filled from sports API data.
 
-## Текущий pipeline
+## Installation
 
-1. Пользователь отправляет текст или скрин матча.
-2. Бот отвечает статусом: `🧠 Собираю расширенный анализ матча...`.
-3. OpenAI распознаёт матч и нормализует `sport`, `league`, `home_team`, `away_team`, `match_datetime`.
-4. `services/web_match_provider.py` ищет открытые страницы по матчу через web search.
-5. Провайдер загружает несколько публичных страниц, логирует реальные `source_url` и `source_domain`, затем извлекает только подтверждённые факты.
-6. `formatters/match_center_formatter.py` детерминированно собирает итоговый Match Center.
-7. Под сообщением остаётся CTA-кнопка `💸 Пополнить с кешбэком`.
+1. Clone the repository and (optionally) create a virtual environment.
+2. Install the dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+3. Create a `.env` file based on `.env.example` and fill in the required variables.
 
-## Требования окружения
+### Environment variables
 
-- `BOT_TOKEN` – Telegram Bot API token.
-- `OPENAI_API_KEY` – ключ OpenAI для распознавания матча и извлечения структурированных фактов из найденных страниц.
-- `ADMIN_ID` – необязательный Telegram ID администратора.
-- `LOG_LEVEL` – необязательный уровень логирования.
+- `BOT_TOKEN` – Telegram bot token.
+- `OPENAI_API_KEY` – your OpenAI API key for screenshot/text match recognition only.
+- `SPORTS_API_KEY` – API-Football / API-Sports key for real match data.
+- `SPORTS_API_HOST` – API host, defaults to `v3.football.api-sports.io`.
+- `SPORTS_API_PROVIDER` – provider label used in logs/output, defaults to `api-football`.
+- `SPORTS_API_BASE_URL` – provider base URL, defaults to `https://v3.football.api-sports.io`.
+- `ADMIN_ID` – optional Telegram ID for registration notifications; if omitted, the bot skips admin alerts.
+- `LOG_LEVEL` – Python logging level, defaults to `INFO`.
 
-> Sports API ключи больше не обязательны: Match Center переведён на web-search + safe fallback архитектуру.
+## Usage
 
-## Safe fallback
+### Local run
 
-Если матч не удалось уверенно определить или подтвердить по открытым источникам, бот отвечает безопасно: 
+```bash
+python bot.py
+```
 
-`Не удалось найти достаточно данных по этому матчу. Попробуйте отправить более четкий скрин, где видны команды, лига и время матча.`
+### Docker
 
-Если отдельный блок не найден, formatter использует короткие fallback-значения:
+```bash
+docker build -t freebeebpt .
+docker run --env-file .env freebeebpt
+```
 
-- таблица: `Данные по таблице уточняются`
-- составы: `Составы уточняются`
-- H2H: `Недостаточно данных`
-- судья: `Данные по судье уточняются`
-- угловые/карточки: `Недостаточно данных`
 
-## Основные файлы
+## Data source architecture
 
-- `bot.py` – aiogram-бот, обработчики сообщений и CTA.
-- `services/match_data_service.py` – orchestration-слой между распознаванием матча и web provider.
-- `services/web_match_provider.py` – поиск страниц, загрузка открытых источников, логирование и нормализация фактов.
-- `formatters/match_center_formatter.py` – детерминированный шаблон Match Center.
-- `models/match_analysis.py` – dataclass-модели итоговой структуры.
-- `services/sports_provider.py` – legacy sports API provider, оставлен в репозитории, но Match Center на него больше не опирается.
+- `ALLOW_LLM_FOR_FACTS = False` in `services/match_data_service.py` explicitly forbids LLM-generated factual blocks.
+- `services/sports_provider.py` integrates API-Football-compatible endpoints for fixtures, standings, lineups, injuries, H2H, form, team stats, match context, and referee.
+- If an API block is unavailable, Match Center uses deterministic fallbacks such as `Составы уточняются`, `Данные по судье уточняются`, `Недостаточно данных`, and `Существенных потерь не выявлено`.
+- Runtime logs report factual block coverage, for example: `[DATA SOURCE] standings: API` or `[DATA SOURCE] cards: MISSING`.
