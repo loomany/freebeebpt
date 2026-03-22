@@ -6,14 +6,14 @@ from typing import Any
 
 @dataclass
 class TeamStanding:
-    position: str = "нет данных"
-    played: str = "нет данных"
-    wins: str = "нет данных"
-    draws: str = "нет данных"
-    losses: str = "нет данных"
-    points: str = "нет данных"
-    goals_for: str = "нет данных"
-    goals_against: str = "нет данных"
+    position: str = "Данные по таблице уточняются"
+    played: str = "Данные по таблице уточняются"
+    wins: str = "Данные по таблице уточняются"
+    draws: str = "Данные по таблице уточняются"
+    losses: str = "Данные по таблице уточняются"
+    points: str = "Данные по таблице уточняются"
+    goals_for: str = "Данные по таблице уточняются"
+    goals_against: str = "Данные по таблице уточняются"
 
 
 @dataclass
@@ -51,8 +51,8 @@ class Absences:
 @dataclass
 class TeamForm:
     icons: str = "—"
-    goals_for: str = "нет данных"
-    goals_against: str = "нет данных"
+    goals_for: str = "Данные уточняются"
+    goals_against: str = "Данные уточняются"
 
 
 @dataclass
@@ -84,10 +84,10 @@ class CardsBlock:
 
 @dataclass
 class KeyNumbers:
-    home_avg_goals: str = "нет данных"
-    away_avg_goals: str = "нет данных"
-    home_avg_conceded: str = "нет данных"
-    away_avg_conceded: str = "нет данных"
+    home_avg_goals: str = "Данные уточняются"
+    away_avg_goals: str = "Данные уточняются"
+    home_avg_conceded: str = "Данные уточняются"
+    away_avg_conceded: str = "Данные уточняются"
 
 
 @dataclass
