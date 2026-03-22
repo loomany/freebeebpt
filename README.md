@@ -15,7 +15,7 @@ FreeBeeBPT is a Telegram bot built with aiogram and OpenAI. It provides sports p
 
 - `BOT_TOKEN` – Telegram bot token.
 - `OPENAI_API_KEY` – your OpenAI API key.
-- `ADMIN_ID` – Telegram ID for registration notifications.
+- `ADMIN_ID` – optional Telegram ID for registration notifications; if omitted, the bot skips admin alerts.
 
 ## Usage
 
