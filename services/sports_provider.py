@@ -333,8 +333,20 @@ class SportsProvider:
             "reason": reason,
         }
 
-    async def _search_fixture_by_team_fallback(self, primary_team_id: int, other_team_id: int) -> dict[str, Any] | None:
-        payload = await self._get("/fixtures", team=primary_team_id, next=10)
+    async def _search_fixture_by_team_fallback(
+        self,
+        primary_team_id: int,
+        other_team_id: int,
+        *,
+        next_count: int | None = None,
+        last_count: int | None = None,
+    ) -> dict[str, Any] | None:
+        params: dict[str, Any] = {"team": primary_team_id}
+        if next_count is not None:
+            params["next"] = next_count
+        if last_count is not None:
+            params["last"] = last_count
+        payload = await self._get("/fixtures", **params)
         return self._find_fixture_in_payload(primary_team_id, other_team_id, payload)
 
     async def find_fixture(self, home_team: str, away_team: str, date: str | None) -> dict[str, Any] | None:
@@ -363,9 +375,15 @@ class SportsProvider:
             if fixture:
                 return fixture
 
-        fixture = await self._search_fixture_by_team_fallback(home_team_id, away_team_id)
-        if fixture:
-            return fixture
+        fallback_requests = (
+            {"primary_team_id": home_team_id, "other_team_id": away_team_id, "next_count": 10},
+            {"primary_team_id": away_team_id, "other_team_id": home_team_id, "next_count": 10},
+            {"primary_team_id": home_team_id, "other_team_id": away_team_id, "last_count": 10},
+        )
+        for fallback_request in fallback_requests:
+            fixture = await self._search_fixture_by_team_fallback(**fallback_request)
+            if fixture:
+                return fixture
 
         logger.warning("fixture not found")
         return None

@@ -33,13 +33,51 @@ class SportsProviderFixtureSearchTests(unittest.IsolatedAsyncioTestCase):
             side_effect=[
                 {"response": []},
                 {"response": [{"teams": {"home": {"id": 1}, "away": {"id": 3}}}]},
+                {"response": []},
+                {"response": []},
             ]
         )
 
         fixture = await provider.find_fixture("Team 1", "Team 2", "2026-03-28")
 
         self.assertIsNone(fixture)
-        self.assertEqual(provider._get.await_count, 2)
+        self.assertEqual(provider._get.await_count, 4)
+
+
+    async def test_find_fixture_uses_requested_team_queries_in_order(self):
+        provider = SportsProvider(api_key="test")
+        provider.search_team = AsyncMock(side_effect=[{"team": {"id": 4686}}, {"team": {"id": 1333}}])
+        provider._get = AsyncMock(
+            side_effect=[
+                {"response": []},
+                {"response": []},
+                {"response": []},
+                {
+                    "response": [
+                        {
+                            "fixture": {"id": 987},
+                            "teams": {
+                                "home": {"id": 1333},
+                                "away": {"id": 4686},
+                            },
+                        }
+                    ]
+                },
+            ]
+        )
+
+        fixture = await provider.find_fixture("Team 4686", "Team 1333", "2026-03-28")
+
+        self.assertEqual((fixture or {}).get("fixture", {}).get("id"), 987)
+        self.assertEqual(provider._get.await_count, 4)
+        self.assertEqual(provider._get.await_args_list[0].args, ("/fixtures",))
+        self.assertEqual(provider._get.await_args_list[0].kwargs, {"from": "2026-03-27", "to": "2026-03-29"})
+        self.assertEqual(provider._get.await_args_list[1].args, ("/fixtures",))
+        self.assertEqual(provider._get.await_args_list[1].kwargs, {"team": 4686, "next": 10})
+        self.assertEqual(provider._get.await_args_list[2].args, ("/fixtures",))
+        self.assertEqual(provider._get.await_args_list[2].kwargs, {"team": 1333, "next": 10})
+        self.assertEqual(provider._get.await_args_list[3].args, ("/fixtures",))
+        self.assertEqual(provider._get.await_args_list[3].kwargs, {"team": 4686, "last": 10})
 
 
 if __name__ == "__main__":
