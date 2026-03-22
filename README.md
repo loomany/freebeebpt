@@ -32,8 +32,8 @@ python bot.py
 
 ### Debugging API-Football
 
-- Use the Telegram command `/test_api` to call `/status` and `/fixtures?team=33&next=1&include=league,teams,goals,fixture.status`.
-- Runtime logs now include `[API REQUEST]`, `[API RESPONSE STATUS]`, `[API RESPONSE BODY]`, `[FIND FIXTURE]`, `[API] team1=... → id=...`, `[API] team2=... → id=...`, `[API] fixtures found: ...`, `[API] match found: YES/NO`, and `[DATA SOURCE] ... = OK/EMPTY`.
+- Use the Telegram command `/test_api` to call `/status` and `/fixtures?team=33&next=10&include=league,teams,goals,fixture.status`.
+- Runtime logs now include `[API REQUEST]`, `[API RESPONSE STATUS]`, `[API RESPONSE BODY]`, `[FIND FIXTURE]`, `[API] team1=... → id=...`, `[API] team2=... → id=...`, `[API] date=YYYY-MM-DD`, `[API] fixtures count=...`, `[API] found match=YES/NO`, and `[DATA SOURCE] ... = OK/EMPTY`.
 
 ### Docker
 

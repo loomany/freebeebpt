@@ -137,16 +137,16 @@ class SportsProvider:
             home.get("id") == team2_id and away.get("id") == team1_id
         )
 
-    async def _find_fixture_in_payload(self, team1_id: int, team2_id: int, payload: dict[str, Any]) -> dict[str, Any] | None:
+    def _find_fixture_in_payload(self, team1_id: int, team2_id: int, payload: dict[str, Any]) -> dict[str, Any] | None:
         fixtures = payload.get("response") or []
-        logger.info("[API] fixtures found: %s", len(fixtures))
+        logger.info("[API] fixtures count=%s", len(fixtures))
         match = next((fixture for fixture in fixtures if self._fixture_matches_team_ids(fixture, team1_id, team2_id)), None)
-        logger.info("[API] match found: %s", "YES" if match else "NO")
+        logger.info("[API] found match=%s", "YES" if match else "NO")
         return match
 
     async def _search_fixture_by_team_fallback(self, primary_team_id: int, other_team_id: int) -> dict[str, Any] | None:
-        payload = await self._get("/fixtures", team=primary_team_id, next=5, include=FIXTURE_INCLUDE_FIELDS)
-        return await self._find_fixture_in_payload(primary_team_id, other_team_id, payload)
+        payload = await self._get("/fixtures", team=primary_team_id, next=10, include=FIXTURE_INCLUDE_FIELDS)
+        return self._find_fixture_in_payload(primary_team_id, other_team_id, payload)
 
     async def find_fixture(self, home_team: str, away_team: str, date: str | None) -> dict[str, Any] | None:
         logger.info("[FIND FIXTURE] home_team=%s away_team=%s match_date=%s", home_team, away_team, date)
@@ -166,17 +166,17 @@ class SportsProvider:
 
         match_date = self._extract_date(date)
         if match_date:
+            logger.info("[API] date=%s", match_date)
             payload = await self._get("/fixtures", date=match_date, include=FIXTURE_INCLUDE_FIELDS)
-            fixture = await self._find_fixture_in_payload(home_team_id, away_team_id, payload)
+            fixture = self._find_fixture_in_payload(home_team_id, away_team_id, payload)
             if fixture:
                 return fixture
 
-        for primary_team_id in (home_team_id, away_team_id):
-            fixture = await self._search_fixture_by_team_fallback(primary_team_id, away_team_id if primary_team_id == home_team_id else home_team_id)
-            if fixture:
-                return fixture
+        fixture = await self._search_fixture_by_team_fallback(home_team_id, away_team_id)
+        if fixture:
+            return fixture
 
-        logger.warning("❌ Матч не найден в API")
+        logger.warning("fixture not found")
         return None
 
     async def get_standings(self, league_id: int, season: int) -> list[dict[str, Any]]:
@@ -219,6 +219,6 @@ class SportsProvider:
         return fixture.get("referee")
 
     async def debug_last_fixture(self, team_id: int = 33) -> dict[str, Any]:
-        payload = await self._get("/fixtures", team=team_id, next=1, include=FIXTURE_INCLUDE_FIELDS)
+        payload = await self._get("/fixtures", team=team_id, next=10, include=FIXTURE_INCLUDE_FIELDS)
         logger.info("[TEST API RAW JSON] %s", json.dumps(payload, ensure_ascii=False)[:3000])
         return payload
