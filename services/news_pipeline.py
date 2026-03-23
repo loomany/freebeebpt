@@ -113,6 +113,62 @@ class NewsPipeline:
         except Exception:
             logger.exception("[ADMIN PREVIEW] debug notify failed article_hash=%s", article.get("article_hash"))
 
+    async def _send_admin_preview(
+        self,
+        *,
+        article: dict[str, Any],
+        messages: list[str],
+        formatted_text: str,
+        image_url: str | None,
+        fal_request_id: str | None,
+        fal_status: str | None,
+        fal_error: str | None,
+    ) -> str:
+        if not self.admin_id:
+            logger.error("[ADMIN PREVIEW] send failed error=ADMIN_ID is not configured")
+            self.repository.update_sent_status(article["article_hash"], "failed", fal_request_id=fal_request_id, fal_status=fal_status, fal_error="ADMIN_ID is not configured")
+            return "failed"
+
+        reply_markup = admin_news_review_keyboard(article["article_hash"])
+        logger.info(
+            "[ADMIN PREVIEW] send start admin_id=%s article_hash=%s image=%s",
+            self.admin_id,
+            article["article_hash"],
+            bool(image_url),
+        )
+        publish_result = await self.telegram_publisher.publish_news_post(
+            chat_id=self.admin_id,
+            messages=messages,
+            image_url=image_url,
+            article_title=article.get("title"),
+            reply_markup=reply_markup,
+        )
+        if publish_result.status != "posted":
+            logger.error("[ADMIN PREVIEW] send failed error=%s article_hash=%s", publish_result.error, article["article_hash"])
+            self.repository.update_sent_status(
+                article["article_hash"],
+                "failed",
+                translated_text=formatted_text,
+                sent_to_admin=False,
+                fal_request_id=fal_request_id,
+                fal_status=fal_status,
+                fal_error=publish_result.error,
+            )
+            return "failed"
+
+        logger.info("[ADMIN PREVIEW] send success message_id=%s article_hash=%s", getattr(publish_result, "message_id", None), article["article_hash"])
+        self.repository.update_sent_status(
+            article["article_hash"],
+            "review_pending",
+            translated_text=formatted_text,
+            sent_to_admin=True,
+            admin_message_id=getattr(publish_result, "message_id", None),
+            fal_request_id=fal_request_id,
+            fal_status=fal_status,
+            fal_error=None,
+        )
+        return "review_pending"
+
     async def send_article_to_channel(self, article_hash: str) -> str:
         article_state = self.repository.get_article_delivery_payload(article_hash)
         if not article_state:
@@ -172,7 +228,7 @@ class NewsPipeline:
             self.repository.update_sent_status(prepared["article_hash"], "failed", skip_reason="ai_result_missing")
             return "failed"
 
-        passed_for_admin_preview = self.ranker.passed_for_admin_preview(ai_result)
+        passed_for_admin_preview = self._is_admin_review_mode() or self.ranker.passed_for_admin_preview(ai_result)
         passed_for_auto_publish = self.ranker.passed_for_auto_publish(ai_result)
         logger.info(
             "[AI] result important=%s score=%s level=%s admin_threshold=%s passed_for_admin_preview=%s auto_publish_threshold=%s passed_for_auto_publish=%s",
@@ -259,44 +315,15 @@ class NewsPipeline:
             )
             return status
 
-        if not self.admin_id:
-            logger.error("[ADMIN PREVIEW] send failed error=ADMIN_ID is not configured")
-            self.repository.update_sent_status(prepared["article_hash"], "failed", fal_request_id=fal_request_id, fal_status=fal_status, fal_error="ADMIN_ID is not configured")
-            return "failed"
-
-        reply_markup = admin_news_review_keyboard(prepared["article_hash"])
-        logger.info("[ADMIN PREVIEW] send start admin_id=%s article_hash=%s", self.admin_id, prepared["article_hash"])
-        publish_result = await self.telegram_publisher.publish_news_post(
-            chat_id=self.admin_id,
+        return await self._send_admin_preview(
+            article=prepared,
             messages=messages,
+            formatted_text=formatted_text,
             image_url=image_url,
-            article_title=prepared.get("title"),
-            reply_markup=reply_markup,
-        )
-        if publish_result.status != "posted":
-            logger.error("[ADMIN PREVIEW] send failed error=%s article_hash=%s", publish_result.error, prepared["article_hash"])
-            self.repository.update_sent_status(
-                prepared["article_hash"],
-                "failed",
-                translated_text=formatted_text,
-                sent_to_admin=False,
-                fal_request_id=fal_request_id,
-                fal_status=fal_status,
-                fal_error=publish_result.error,
-            )
-            return "failed"
-        logger.info("[ADMIN PREVIEW] send success message_id=%s article_hash=%s", getattr(publish_result, "message_id", None), prepared["article_hash"])
-        self.repository.update_sent_status(
-            prepared["article_hash"],
-            "review_pending",
-            translated_text=formatted_text,
-            sent_to_admin=True,
-            admin_message_id=getattr(publish_result, "message_id", None),
             fal_request_id=fal_request_id,
             fal_status=fal_status,
-            fal_error=None,
+            fal_error=fal_error,
         )
-        return "review_pending"
 
     async def run_single_topic_cycle(self, topic: str, *, trigger: str) -> str:
         result = await self.gnews_service.fetch_topic_news(topic)
