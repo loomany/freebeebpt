@@ -87,7 +87,6 @@ if PYDANTIC_AVAILABLE:
         summary_kk: str = ""
         key_points_kk: list[str] = Field(default_factory=list)
         betting_impact_kk: str = ""
-        team_impact_kk: str = ""
         image_prompt_en: str = ""
         send_reason: str = ""
         skip_reason: str = ""
@@ -135,7 +134,6 @@ else:
         summary_kk: str = ""
         key_points_kk: list[str] = field(default_factory=list)
         betting_impact_kk: str = ""
-        team_impact_kk: str = ""
         image_prompt_en: str = ""
         send_reason: str = ""
         skip_reason: str = ""

@@ -133,6 +133,25 @@ class FormatterAndRankerTests(unittest.TestCase):
         message = format_ai_news_message("football", result)[0]
 
         self.assertIn("📰 Маңызды жаңалық", message)
+        self.assertNotIn("📊 Беттингке әсері:", message)
+        self.assertNotIn("👥 Командаға әсері:", message)
+
+
+    def test_format_ai_news_message_shows_betting_label_when_present(self):
+        result = AINewsResult(
+            is_important=True,
+            importance_score=90,
+            importance_level="top",
+            category="tennis",
+            rewritten_title_kk="Теннис жаңалығы",
+            summary_kk="Қысқаша мазмұн",
+            betting_impact_kk="Нарық күтулері өзгеруі мүмкін.",
+            image_prompt_en="vertical sports poster",
+        )
+
+        message = format_ai_news_message("tennis", result)[0]
+
+        self.assertIn("📊 Беттингке әсері:", message)
         self.assertNotIn("📊 Ставкаға әсері:", message)
         self.assertNotIn("👥 Командаға әсері:", message)
 

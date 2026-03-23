@@ -10,7 +10,7 @@ Telegram-бот получает спортивные новости из GNews,
 4. Перед AI-обработкой бот проверяет антидубль по `article_hash` в SQLite: в БД сохраняются `article_hash`, `url`, `status`, `sent_to_channel`; после рестарта эти записи повторно читаются из БД.
 5. Для новой статьи бот пытается извлечь полный текст через `trafilatura`, затем через `readability-lxml + BeautifulSoup`, затем через простой HTML parse.
 6. Если полный текст короткий или недоступен, используется fallback из `content`, либо `title + description`.
-7. OpenAI возвращает строго JSON с фильтром важности, казахским summary, ключевыми тезисами, optional impact-блоками и `image_prompt_en`.
+7. OpenAI возвращает строго JSON с фильтром важности, казахским summary, ключевыми тезисами, optional betting impact-блоком и `image_prompt_en`.
 8. Для важных новостей бот вызывает fal Nano Banana c `aspect_ratio=9:16` и получает новую картинку.
 9. В Telegram уходит только сгенерированная картинка и AI-текст без source URL и без image из news API.
 10. Бот отправляет только новости с `importance_score >= NEWS_IMPORTANCE_MIN_SCORE` и `importance_level in {high, top}`.

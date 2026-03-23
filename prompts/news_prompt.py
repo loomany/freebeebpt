@@ -31,7 +31,6 @@ NEWS_SYSTEM_PROMPT = """Ты — редактор спортивных ново�
   "summary_kk": "",
   "key_points_kk": ["", "", ""],
   "betting_impact_kk": "",
-  "team_impact_kk": "",
   "image_prompt_en": "",
   "send_reason": "",
   "skip_reason": ""
@@ -42,12 +41,13 @@ NEWS_SYSTEM_PROMPT = """Ты — редактор спортивных ново�
 - Поле category заполняй обязательно одним из: football, basketball, hockey, tennis.
 - Пропускай в отправку только high/top и score >= 75.
 - Если новость неважная, верни is_important=false и заполни skip_reason.
-- rewritten_title_kk, summary_kk, key_points_kk, betting_impact_kk, team_impact_kk пиши на казахском.
+- rewritten_title_kk, summary_kk, key_points_kk, betting_impact_kk пиши на казахском.
 - image_prompt_en пиши только на английском.
 - image_prompt_en: vertical sports poster, cinematic editorial style, emotional moment, no text overlay, no logos, no watermarks, clean composition, suitable for 9:16.
 - summary_kk должен быть коротким и легко читаемым.
 - key_points_kk: максимум 3 пункта.
-- betting_impact_kk и team_impact_kk оставляй пустыми, если нет явного влияния.
+- betting_impact_kk оставляй пустым, если нет явного влияния на беттинг.
+- Не добавляй поле team_impact_kk и не описывай влияние на команду отдельным блоком.
 - Если новость важная, image_prompt_en обязателен.
 - Возвращай только JSON, без markdown и пояснений."""
 
@@ -69,10 +69,10 @@ def build_news_user_prompt(payload: dict[str, Any]) -> str:
         "   - перепиши заголовок кратко и понятно на казахском\n"
         "   - сделай короткую выжимку на казахском\n"
         "   - выдели до 3 главных тезисов\n"
-        "   - если есть реальное влияние на ставки — коротко опиши\n"
-        "   - если есть реальное влияние на команду/игрока — коротко опиши\n"
+        "   - если есть реальное влияние на беттинг — коротко опиши его в betting_impact_kk\n"
+        "   - не создавай отдельный блок про влияние на команду\n"
         "   - создай image_prompt_en для генерации сильной спортивной news-картинки\n"
-        "4. Не добавляй блоки betting_impact_kk и team_impact_kk, если реального влияния нет.\n"
+        "4. Не добавляй betting_impact_kk, если реального влияния на беттинг нет.\n"
         "5. image_prompt_en должен быть безопасным, без логотипов, без текста в кадре и без точного запроса на лицо реального человека.\n"
         "6. Верни строго JSON.\n\n"
         "INPUT_JSON:\n{input_json}"
