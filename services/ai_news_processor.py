@@ -45,10 +45,76 @@ ENTITY_STOPWORDS = {
     "After", "Before", "During", "Against", "Vs", "Via", "Is", "Are", "Was", "Were", "Be", "As",
     "Breaking", "Report", "Reports", "Update", "Live", "News",
 }
+TEAM_ENTITY_KEYWORDS = {
+    "fc", "cf", "sc", "ac", "club", "team", "united", "city", "miami", "lakers", "celtics", "arsenal",
+    "chelsea", "barcelona", "madrid", "yankees", "mets", "dodgers", "warriors", "heat", "inter", "real",
+}
 ENTITY_TOKEN_PATTERN = re.compile(r"[A-Z][a-z]+(?:[-'][A-Z]?[a-z]+)?|[A-Z]{2,}")
 ENTITY_SEQUENCE_PATTERN = re.compile(
     r"\b(?:[A-Z][a-z]+(?:[-'][A-Z]?[a-z]+)?|[A-Z]{2,})(?:\s+(?:[A-Z][a-z]+(?:[-'][A-Z]?[a-z]+)?|[A-Z]{2,})){0,3}\b"
 )
+MATCHUP_PATTERN = re.compile(r"\b(?:vs\.?|versus|against)\b", re.IGNORECASE)
+
+
+def _clean_prompt_fragment(value: str, *, limit: int = 220) -> str:
+    cleaned = re.sub(r"\s+", " ", str(value or "")).strip(" .,:;!-")
+    return cleaned[:limit].rstrip(" ,;:-")
+
+
+def _looks_like_person_entity(entity: str) -> bool:
+    tokens = entity.split()
+    if len(tokens) < 2 or len(tokens) > 3:
+        return False
+    lowered = {token.lower().strip(".,") for token in tokens}
+    if lowered & TEAM_ENTITY_KEYWORDS:
+        return False
+    if any(token.isupper() and len(token) <= 3 for token in tokens):
+        return False
+    if any(token.isupper() and len(token) > 3 for token in tokens):
+        return False
+    return True
+
+
+def build_image_prompt_fallback(
+    *,
+    title: str,
+    description: str,
+    article_text: str,
+    category: str,
+    team_or_player_names: list[str] | None,
+) -> tuple[str, str]:
+    entities = [_clean_prompt_fragment(item, limit=80) for item in (team_or_player_names or []) if _clean_prompt_fragment(item, limit=80)]
+    story_context = _clean_prompt_fragment(". ".join(part for part in [title, description] if part), limit=240)
+    article_context = _clean_prompt_fragment(article_text, limit=240)
+    context = story_context or article_context or "breaking sports news moment"
+    sport_label = category or infer_news_category(title, description, article_text) or "sports"
+
+    person_entity = next((entity for entity in entities if _looks_like_person_entity(entity)), None)
+    matchup_detected = bool(MATCHUP_PATTERN.search(f"{title} {description} {article_text}"))
+
+    if person_entity:
+        prompt = (
+            f"vertical sports poster, cinematic editorial style, {sport_label} scene, "
+            f"featured athlete or coach inspired by {person_entity}, decisive news moment, {context}, "
+            "dynamic action, dramatic stadium lighting, emotional realism, no text overlay, no logos, no watermarks, clean composition, suitable for 9:16"
+        )
+        return prompt, "person"
+
+    if matchup_detected or entities:
+        featured_entities = " vs ".join(entities[:2]) if len(entities) >= 2 else entities[0]
+        prompt = (
+            f"vertical sports poster, cinematic editorial style, {sport_label} match scene, "
+            f"teams or rivalry inspired by {featured_entities}, decisive game atmosphere, {context}, "
+            "crowd energy, dramatic motion, editorial realism, no text overlay, no logos, no watermarks, clean composition, suitable for 9:16"
+        )
+        return prompt, "team"
+
+    prompt = (
+        f"vertical sports poster, cinematic editorial style, {sport_label} editorial news scene, "
+        f"dramatic sports atmosphere inspired by headline: {context}, intense action, stadium lights, "
+        "editorial realism, no text overlay, no logos, no watermarks, clean composition, suitable for 9:16"
+    )
+    return prompt, "generic"
 
 
 def _normalize_category(value: Any) -> str:
@@ -110,6 +176,17 @@ def ensure_ai_result_category(payload: dict[str, Any], *, topic: str, title: str
         topic,
     )
     enriched_payload["category"] = explicit_category or inferred_category or ""
+    fallback_prompt, fallback_mode = build_image_prompt_fallback(
+        title=title,
+        description=description,
+        article_text=article_text,
+        category=enriched_payload["category"],
+        team_or_player_names=team_or_player_names,
+    )
+    logger.info("[AI PROMPT] mode=%s", fallback_mode)
+    if enriched_payload.get("is_important") and not str(enriched_payload.get("image_prompt_en") or "").strip():
+        enriched_payload["image_prompt_en"] = fallback_prompt
+        logger.info("[AI PROMPT] fallback used")
     return enriched_payload
 
 
