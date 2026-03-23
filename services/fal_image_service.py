@@ -82,7 +82,10 @@ class FalImageService:
     def _normalize_status(self, status: Any, default: str = "UNKNOWN") -> str:
         if status is None:
             return default
-        value = getattr(status, "status", status)
+        if isinstance(status, dict):
+            value = status.get("status", default)
+        else:
+            value = getattr(status, "status", status)
         if isinstance(value, str):
             return value.upper()
         return str(value).upper()
@@ -206,14 +209,15 @@ class FalImageService:
                         len(logs or []),
                     )
                     if status == "COMPLETED":
+                        logger.info("[FAL] completed request_id=%s", request_id)
                         result_payload = await asyncio.wait_for(
                             self._get_result(handle_or_payload, request_id),
                             timeout=self.http_timeout_seconds,
                         )
-                        logger.info("[FAL] completed request_id=%s", request_id)
+                        logger.info("[FAL] result payload = %s", result_payload)
                         image_url = self._extract_image_url(result_payload)
+                        logger.info("[FAL] image_url parsed=%s request_id=%s", image_url, request_id)
                         if image_url:
-                            logger.info("[FAL] image_url=%s request_id=%s", image_url, request_id)
                             return FalGenerationResult(
                                 request_id=request_id,
                                 status="success",
@@ -222,7 +226,7 @@ class FalImageService:
                                 payload=result_payload,
                             )
                         error_message = "response does not contain images[0].url"
-                        logger.error("[FAL] failed error=%s request_id=%s", error_message, request_id)
+                        logger.error("[FAL] completed but empty result request_id=%s error=%s", request_id, error_message)
                         return FalGenerationResult(
                             request_id=request_id,
                             status="failed",
