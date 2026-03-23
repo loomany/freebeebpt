@@ -71,7 +71,10 @@ class FalImageService:
     def _extract_image_url(self, payload: dict[str, Any] | None) -> str | None:
         if not isinstance(payload, dict):
             return None
-        images = payload.get("images") or []
+        data = payload.get("data") or payload
+        if not isinstance(data, dict):
+            return None
+        images = data.get("images") or []
         if not images or not isinstance(images, list):
             return None
         first = images[0] or {}
@@ -215,6 +218,11 @@ class FalImageService:
                             timeout=self.http_timeout_seconds,
                         )
                         logger.info("[FAL] result payload = %s", result_payload)
+                        logger.info("[FAL DEBUG] raw result payload keys=%s", list(result_payload.keys()) if isinstance(result_payload, dict) else None)
+                        logger.info(
+                            "[FAL DEBUG] data keys=%s",
+                            list((result_payload.get("data") or {}).keys()) if isinstance(result_payload, dict) and isinstance(result_payload.get("data") or {}, dict) else None,
+                        )
                         image_url = self._extract_image_url(result_payload)
                         logger.info("[FAL] image_url parsed=%s request_id=%s", image_url, request_id)
                         if image_url:
