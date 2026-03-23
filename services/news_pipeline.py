@@ -129,11 +129,26 @@ class NewsPipeline:
             self.repository.update_sent_status(article["article_hash"], "failed", fal_request_id=fal_request_id, fal_status=fal_status, fal_error="ADMIN_ID is not configured")
             return "failed"
 
-        reply_markup = admin_news_review_keyboard(article["article_hash"])
+        article_ref = self.repository.get_callback_article_ref(article["article_hash"])
+        if not article_ref:
+            logger.error("[ADMIN PREVIEW] send failed error=callback reference is not available article_hash=%s", article["article_hash"])
+            self.repository.update_sent_status(
+                article["article_hash"],
+                "failed",
+                translated_text=formatted_text,
+                sent_to_admin=False,
+                fal_request_id=fal_request_id,
+                fal_status=fal_status,
+                fal_error="callback reference is not available",
+            )
+            return "failed"
+
+        reply_markup = admin_news_review_keyboard(article_ref)
         logger.info(
-            "[ADMIN PREVIEW] send start admin_id=%s article_hash=%s image=%s",
+            "[ADMIN PREVIEW] send start admin_id=%s article_hash=%s article_ref=%s image=%s",
             self.admin_id,
             article["article_hash"],
+            article_ref,
             bool(image_url),
         )
         publish_result = await self.telegram_publisher.publish_news_post(

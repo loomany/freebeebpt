@@ -228,6 +228,31 @@ class NewsRepositoryTests(unittest.TestCase):
             self.assertEqual(debug["admin_message_id"], 555)
             self.assertEqual(debug["generated_image_url"], "https://img.test/generated.png")
 
+    def test_callback_article_ref_resolves_back_to_article_hash(self):
+        with TemporaryDirectory() as tmp_dir:
+            repository = NewsRepository(Path(tmp_dir) / "test.sqlite3")
+            repository.save_sent_news(
+                NewsArticleRecord(
+                    topic="football",
+                    article_hash="key-callback-ref",
+                    url="https://example.com/callback",
+                    title="Callback story",
+                    description=None,
+                    content=None,
+                    published_at=None,
+                    image=None,
+                    source_name="ESPN",
+                    source_url=None,
+                )
+            )
+
+            article_ref = repository.get_callback_article_ref("key-callback-ref")
+
+            self.assertIsNotNone(article_ref)
+            self.assertTrue(article_ref.isdigit())
+            self.assertEqual(repository.resolve_callback_article_hash(article_ref), "key-callback-ref")
+            self.assertIsNone(repository.resolve_callback_article_hash("bad-ref"))
+
     def test_sent_to_channel_persists_across_repository_restart(self):
         with TemporaryDirectory() as tmp_dir:
             db_path = Path(tmp_dir) / "test.sqlite3"
@@ -1002,6 +1027,10 @@ class NewsPipelineTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(state["skip_reason"], "low practical value")
             self.assertTrue(state["sent_to_admin"])
             self.assertFalse(state["published_to_channel"])
+            reply_markup = bot.send_photo.await_args.kwargs["reply_markup"]
+            callback_data = [button.callback_data for row in reply_markup.inline_keyboard for button in row]
+            self.assertEqual(callback_data, ["send_news:1", "skip_news:1"])
+            self.assertTrue(all(len(value.encode("utf-8")) <= 64 for value in callback_data))
 
 
 if __name__ == "__main__":

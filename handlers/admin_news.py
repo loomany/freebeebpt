@@ -161,7 +161,11 @@ def register_admin_news_handlers(dp: Dispatcher, *, context: dict[str, Any]) -> 
             await callback_query.answer("TELEGRAM_NEWS_CHAT_ID не задан", show_alert=True)
             return
 
-        article_hash = callback_query.data.split(":", 1)[1]
+        article_ref = callback_query.data.split(":", 1)[1]
+        article_hash = repository.resolve_callback_article_hash(article_ref)
+        if not article_hash:
+            await callback_query.answer("Не нашёл новость для публикации", show_alert=True)
+            return
         send_result = await news_pipeline.send_article_to_channel(article_hash)
         if send_result == "posted":
             await callback_query.answer("Опубликовано")
@@ -194,7 +198,11 @@ def register_admin_news_handlers(dp: Dispatcher, *, context: dict[str, Any]) -> 
         if not admin_id_raw or str(callback_query.from_user.id) != admin_id_raw:
             await callback_query.answer("Только администратор может пропускать новости", show_alert=True)
             return
-        article_hash = callback_query.data.split(":", 1)[1]
+        article_ref = callback_query.data.split(":", 1)[1]
+        article_hash = repository.resolve_callback_article_hash(article_ref)
+        if not article_hash:
+            await callback_query.answer("Не нашёл новость для пропуска", show_alert=True)
+            return
         result = await news_pipeline.skip_article_by_admin(article_hash)
         if result == "skipped":
             await callback_query.answer("Пропущено")
