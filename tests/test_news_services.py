@@ -28,6 +28,36 @@ class NewsRepositoryTests(unittest.TestCase):
             self.assertEqual(repository.increment_daily_requests("2026-03-22"), 1)
             self.assertEqual(repository.increment_daily_requests("2026-03-22", 2), 3)
 
+    def test_sent_to_channel_persists_across_repository_restart(self):
+        with TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "test.sqlite3"
+            repository = NewsRepository(db_path)
+            repository.save_sent_news(
+                NewsArticleRecord(
+                    topic="football",
+                    article_hash="persisted-key",
+                    url="https://example.com/persisted",
+                    title="Persisted story",
+                    description=None,
+                    content=None,
+                    published_at="2026-03-22T10:00:00Z",
+                    image=None,
+                    source_name="ESPN",
+                    source_url=None,
+                    status="posted",
+                    sent_to_channel=True,
+                ),
+                sent_at="2026-03-22T10:05:00Z",
+            )
+
+            restarted_repository = NewsRepository(db_path)
+            state = restarted_repository.get_article_state("persisted-key")
+
+            self.assertIsNotNone(state)
+            self.assertTrue(state["sent_to_channel"])
+            self.assertEqual(state["status"], "posted")
+            self.assertTrue(restarted_repository.should_skip_publication("persisted-key"))
+
 
 class ArticleHelpersTests(unittest.TestCase):
     def test_clean_article_text_removes_noise_and_tail(self):
@@ -190,6 +220,67 @@ class NewsPipelineTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("posted=3", summary)
             self.assertIn("queued=1", summary)
             self.assertEqual(bot.send_photo.await_count, 3)
+
+    async def test_publish_skips_article_already_marked_as_posted_in_db(self):
+        with TemporaryDirectory() as tmp_dir:
+            repository = NewsRepository(Path(tmp_dir) / "test.sqlite3")
+            bot = AsyncMock()
+            formatter = AsyncMock()
+            formatter.format_post = AsyncMock(return_value=(["message"], "kk"))
+            ai_processor = AsyncMock()
+            ai_processor.process_news_with_ai = AsyncMock(
+                return_value=AINewsResult(
+                    is_important=True,
+                    importance_score=90,
+                    importance_level="top",
+                    category="football",
+                    rewritten_title_kk="T",
+                    summary_kk="S",
+                    image_prompt_en="vertical sports poster",
+                )
+            )
+            fal_image_service = AsyncMock()
+            gnews_service = AsyncMock()
+            repository.save_sent_news(
+                NewsArticleRecord(
+                    topic="football",
+                    article_hash="key-posted",
+                    url="https://e/posted",
+                    title="Posted",
+                    description=None,
+                    content=None,
+                    published_at=None,
+                    image=None,
+                    source_name="ESPN",
+                    source_url=None,
+                    status="posted",
+                    sent_to_channel=True,
+                )
+            )
+            pipeline = NewsPipeline(
+                bot=bot,
+                repository=repository,
+                gnews_service=gnews_service,
+                formatter=formatter,
+                ai_processor=ai_processor,
+                ranker=NewsRanker(min_score=75),
+                telegram_publisher=TelegramPublisher(bot),
+                fal_image_service=fal_image_service,
+                admin_id=1,
+                news_channel_id=None,
+                news_post_mode="admin",
+            )
+            pipeline.extract_enabled = False
+
+            status = await pipeline._publish_article(
+                {"article_hash": "key-posted", "topic": "football", "title": "Posted", "source_name": "ESPN", "url": "https://e/posted"}
+            )
+
+            self.assertEqual(status, "skipped")
+            formatter.format_post.assert_not_called()
+            ai_processor.process_news_with_ai.assert_not_called()
+            bot.send_message.assert_not_called()
+            bot.send_photo.assert_not_called()
 
     async def test_run_single_topic_skips_low_value_news(self):
         with TemporaryDirectory() as tmp_dir:

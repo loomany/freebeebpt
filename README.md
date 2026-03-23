@@ -7,7 +7,7 @@ Telegram-бот получает спортивные новости из GNews,
 1. Планировщик запускает цикл по `NEWS_POLL_MINUTES`.
 2. При `NEWS_TOPIC_ROTATION=true` за цикл проверяется только одна тема по кругу (`football`, `tennis`, `hockey`, `basketball`).
 3. Бот получает до `GNEWS_MAX_RESULTS` новостей из GNews.
-4. Перед AI-обработкой бот проверяет антидубль по `url`, а если URL нет — по `source_name + normalized_title`.
+4. Перед AI-обработкой бот проверяет антидубль по `article_hash` в SQLite: в БД сохраняются `article_hash`, `url`, `status`, `sent_to_channel`; после рестарта эти записи повторно читаются из БД.
 5. Для новой статьи бот пытается извлечь полный текст через `trafilatura`, затем через `readability-lxml + BeautifulSoup`, затем через простой HTML parse.
 6. Если полный текст короткий или недоступен, используется fallback из `content`, либо `title + description`.
 7. OpenAI возвращает строго JSON с фильтром важности, казахским summary, ключевыми тезисами, optional impact-блоками и `image_prompt_en`.
@@ -49,6 +49,7 @@ Telegram-бот получает спортивные новости из GNews,
 - `USE_NEWS_API_IMAGES=false`
 - `NEWS_POST_MODE=admin|channel`
 - `LOG_LEVEL`
+- `NEWS_DB_PATH` — путь к SQLite БД. Для Railway укажи путь внутри persistent volume, например `${RAILWAY_VOLUME_MOUNT_PATH}/news_bot.sqlite3`.
 
 ## Админ-команды
 
@@ -76,3 +77,10 @@ Telegram-бот получает спортивные новости из GNews,
 pip install -r requirements.txt
 python bot.py
 ```
+
+## Дедупликация и restart-safe хранение
+
+- Источник истины для дедупликации — таблица `news_sent` в SQLite, а не память процесса.
+- При fetch каждая новая статья сохраняется в БД с `article_hash` и `url`; после успешной отправки запись обновляется с `status=posted` и `sent_to_channel=1`.
+- Перед публикацией пайплайн повторно читает состояние статьи из БД и пропускает публикацию, если запись уже была отправлена (`sent_to_channel=1` или `status=posted`).
+- На Railway SQLite-файл нужно хранить только в persistent volume. Используй `NEWS_DB_PATH=${RAILWAY_VOLUME_MOUNT_PATH}/news_bot.sqlite3` или аналогичный путь внутри volume.
