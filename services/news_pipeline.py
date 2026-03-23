@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from services.article_extractor import build_fallback_text, extract_article_text
+from services.ai_news_processor import extract_team_or_player_names
 from services.gnews_service import TOPICS
 from services.news_repository import NewsRepository
 
@@ -64,6 +65,13 @@ class NewsPipeline:
         return article
 
     async def _build_ai_result(self, article: dict[str, Any]):
+        team_or_player_names = extract_team_or_player_names(
+            article.get("title"),
+            article.get("description"),
+            article.get("content"),
+            article.get("final_text"),
+            article.get("source_name"),
+        )
         return await self.ai_processor.process_news_with_ai(
             topic=article.get("topic") or "",
             title=article.get("title") or "",
@@ -71,7 +79,7 @@ class NewsPipeline:
             article_text=article.get("final_text") or "",
             source_name=article.get("source_name") or "",
             published_at=article.get("published_at") or "",
-            team_or_player_names=[],
+            team_or_player_names=team_or_player_names,
             url=article.get("url"),
         )
 

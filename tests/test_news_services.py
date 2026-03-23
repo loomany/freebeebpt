@@ -4,7 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock
 
-from services.ai_news_processor import AINewsResult, ensure_ai_result_category, infer_news_category
+from services.ai_news_processor import AINewsResult, ensure_ai_result_category, extract_team_or_player_names, infer_news_category
 from services.article_extractor import build_fallback_text, clean_article_text
 from services.gnews_service import GNewsService
 from services.news_pipeline import NewsPipeline
@@ -204,6 +204,15 @@ class FormatterAndRankerTests(unittest.TestCase):
     def test_infer_news_category_has_no_default_football(self):
         self.assertIsNone(infer_news_category("", "", "Breaking update", "General sports bulletin"))
 
+    def test_extract_team_or_player_names_prefers_real_entities(self):
+        names = extract_team_or_player_names(
+            "Novak Djokovic beats Carlos Alcaraz in Miami Open thriller",
+            "ATP stars Novak Djokovic and Carlos Alcaraz advance",
+        )
+
+        self.assertIn("Novak Djokovic", names)
+        self.assertIn("Carlos Alcaraz", names)
+
 
 class TelegramPublisherTests(unittest.IsolatedAsyncioTestCase):
     async def test_publish_news_post_falls_back_to_send_message_after_send_photo_error(self):
@@ -312,6 +321,44 @@ class NewsPipelineTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("posted=3", summary)
             self.assertIn("queued=1", summary)
             self.assertEqual(bot.send_photo.await_count, 3)
+
+    async def test_build_ai_result_extracts_team_or_player_names_for_prompt(self):
+        with TemporaryDirectory() as tmp_dir:
+            repository = NewsRepository(Path(tmp_dir) / "test.sqlite3")
+            bot = AsyncMock()
+            formatter = AsyncMock()
+            ai_processor = AsyncMock()
+            ai_processor.process_news_with_ai = AsyncMock(return_value=None)
+            pipeline = NewsPipeline(
+                bot=bot,
+                repository=repository,
+                gnews_service=AsyncMock(),
+                formatter=formatter,
+                ai_processor=ai_processor,
+                ranker=NewsRanker(min_score=75),
+                telegram_publisher=TelegramPublisher(bot),
+                fal_image_service=AsyncMock(),
+                admin_id=1,
+                news_channel_id=None,
+                news_post_mode="admin",
+            )
+
+            await pipeline._build_ai_result(
+                {
+                    "topic": "football",
+                    "title": "Lionel Messi returns for Inter Miami",
+                    "description": "The Argentine star is back in training ahead of the match.",
+                    "content": "Inter Miami expect Lionel Messi to start after recovery.",
+                    "final_text": "Lionel Messi could return to the lineup for Inter Miami this weekend.",
+                    "source_name": "ESPN",
+                    "published_at": "2026-03-23T10:00:00Z",
+                    "url": "https://example.com/story",
+                }
+            )
+
+            call = ai_processor.process_news_with_ai.await_args
+            self.assertIn("Lionel Messi", call.kwargs["team_or_player_names"])
+            self.assertIn("Inter Miami", call.kwargs["team_or_player_names"])
 
     async def test_publish_skips_article_already_marked_as_posted_in_db(self):
         with TemporaryDirectory() as tmp_dir:

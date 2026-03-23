@@ -40,6 +40,15 @@ CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
     ),
 }
 VALID_CATEGORIES = frozenset(CATEGORY_KEYWORDS)
+ENTITY_STOPWORDS = {
+    "A", "An", "The", "And", "Or", "But", "For", "To", "From", "Of", "In", "On", "At", "By", "With",
+    "After", "Before", "During", "Against", "Vs", "Via", "Is", "Are", "Was", "Were", "Be", "As",
+    "Breaking", "Report", "Reports", "Update", "Live", "News",
+}
+ENTITY_TOKEN_PATTERN = re.compile(r"[A-Z][a-z]+(?:[-'][A-Z]?[a-z]+)?|[A-Z]{2,}")
+ENTITY_SEQUENCE_PATTERN = re.compile(
+    r"\b(?:[A-Z][a-z]+(?:[-'][A-Z]?[a-z]+)?|[A-Z]{2,})(?:\s+(?:[A-Z][a-z]+(?:[-'][A-Z]?[a-z]+)?|[A-Z]{2,})){0,3}\b"
+)
 
 
 def _normalize_category(value: Any) -> str:
@@ -59,6 +68,34 @@ def infer_news_category(*values: Any) -> str | None:
         if any(keyword in haystack for keyword in keywords):
             return category
     return None
+
+
+def extract_team_or_player_names(*values: Any, limit: int = 8) -> list[str]:
+    seen: set[str] = set()
+    extracted: list[str] = []
+    for value in values:
+        text = str(value or "")
+        if not text:
+            continue
+        for match in ENTITY_SEQUENCE_PATTERN.finditer(text):
+            candidate = match.group(0).strip(" .,:;!?()[]{}\"'")
+            if len(candidate) < 3:
+                continue
+            tokens = ENTITY_TOKEN_PATTERN.findall(candidate)
+            if not tokens:
+                continue
+            if all(token in ENTITY_STOPWORDS for token in tokens):
+                continue
+            if len(tokens) == 1 and tokens[0] in ENTITY_STOPWORDS:
+                continue
+            normalized = " ".join(tokens)
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            extracted.append(normalized)
+            if len(extracted) >= limit:
+                return extracted
+    return extracted
 
 
 def ensure_ai_result_category(payload: dict[str, Any], *, topic: str, title: str, description: str, article_text: str, source_name: str, team_or_player_names: list[str] | None) -> dict[str, Any]:
