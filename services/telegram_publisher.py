@@ -70,6 +70,7 @@ class TelegramPublisher:
         messages: list[str],
         image_url: str | None,
         article_title: str | None,
+        allow_text_only: bool = False,
         reply_markup: InlineKeyboardMarkup | None = None,
     ) -> PublishResult:
         if chat_id is None:
@@ -121,7 +122,7 @@ class TelegramPublisher:
                 overflow_messages = messages
                 logger.info("[SEND] send_photo failed; switching to send_message fallback chat_id=%s", chat_id)
         else:
-            if self.require_image_for_news_post:
+            if self.require_image_for_news_post and not allow_text_only:
                 logger.error("[SEND] no image_url and image is required chat_id=%s title=%s", chat_id, article_title)
                 return PublishResult(
                     status="failed",
