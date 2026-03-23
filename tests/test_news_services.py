@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 
 from services.ai_news_processor import AINewsResult, ensure_ai_result_category, extract_team_or_player_names, infer_news_category
 from services.article_extractor import build_fallback_text, clean_article_text
+from services.dedup import build_article_hash
 from services.gnews_service import GNewsService
 from services.news_pipeline import NewsPipeline
 from services.news_ranker import NewsRanker
@@ -27,6 +28,19 @@ class NewsRepositoryTests(unittest.TestCase):
             self.assertEqual(repository.get_daily_requests("2026-03-22"), 0)
             self.assertEqual(repository.increment_daily_requests("2026-03-22"), 1)
             self.assertEqual(repository.increment_daily_requests("2026-03-22", 2), 3)
+
+    def test_article_hash_ignores_tracking_query_params(self):
+        first = build_article_hash(
+            "https://example.com/story?utm_source=telegram&id=7",
+            "ESPN",
+            "Story",
+        )
+        second = build_article_hash(
+            "https://example.com/story?id=7&utm_medium=social",
+            "ESPN",
+            "Story",
+        )
+        self.assertEqual(first, second)
 
     def test_duplicate_news_detected_by_normalized_title_after_restart(self):
         with TemporaryDirectory() as tmp_dir:
@@ -56,6 +70,35 @@ class NewsRepositoryTests(unittest.TestCase):
                 restarted_repository.is_duplicate_news(
                     "https://example.com/new-link",
                     "Breaking Messi returns",
+                    "Sky Sports",
+                )
+            )
+
+    def test_duplicate_news_detected_for_similar_titles_from_different_sources(self):
+        with TemporaryDirectory() as tmp_dir:
+            repository = NewsRepository(Path(tmp_dir) / "test.sqlite3")
+            repository.save_sent_news(
+                NewsArticleRecord(
+                    topic="tennis",
+                    article_hash="korda-one",
+                    url="https://example.com/korda-1",
+                    title="Sebastian Korda stuns Carlos Alcaraz in Miami Open upset",
+                    description=None,
+                    content=None,
+                    published_at="2026-03-22T10:00:00Z",
+                    image=None,
+                    source_name="ESPN",
+                    source_url=None,
+                    status="posted",
+                    sent_to_channel=True,
+                ),
+                sent_at="2026-03-22T10:05:00Z",
+            )
+
+            self.assertTrue(
+                repository.is_duplicate_news(
+                    "https://example.com/korda-2",
+                    "Korda shocks Alcaraz in Miami Open third round",
                     "Sky Sports",
                 )
             )
@@ -146,6 +189,41 @@ class GNewsServiceTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(result.fetched_articles, 2)
             self.assertEqual(len(result.new_articles), 1)
+
+    async def test_fetch_topic_news_skips_batch_duplicates_before_repository_check(self):
+        with TemporaryDirectory() as tmp_dir:
+            repository = NewsRepository(Path(tmp_dir) / "test.sqlite3")
+            service = GNewsService(repository=repository, api_key="test")
+            service.fetcher._request_json = AsyncMock(
+                return_value={
+                    "articles": [
+                        {
+                            "title": "Story",
+                            "description": "Desc",
+                            "content": "Content",
+                            "url": "https://example.com/story?id=1&utm_source=gnews",
+                            "publishedAt": "2026-03-22T10:00:00Z",
+                            "image": None,
+                            "source": {"name": "ESPN", "url": "https://espn.com"},
+                        },
+                        {
+                            "title": "Story",
+                            "description": "Desc",
+                            "content": "Content",
+                            "url": "https://example.com/story?id=1&utm_medium=social",
+                            "publishedAt": "2026-03-22T10:00:10Z",
+                            "image": None,
+                            "source": {"name": "ESPN", "url": "https://espn.com"},
+                        },
+                    ]
+                }
+            )
+
+            result = await service.fetch_topic_news("football")
+
+            self.assertEqual(result.fetched_articles, 2)
+            self.assertEqual(len(result.new_articles), 1)
+            self.assertEqual(repository.get_stats()["total_saved_articles"], 1)
 
 
 class FormatterAndRankerTests(unittest.TestCase):

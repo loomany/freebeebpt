@@ -7,7 +7,7 @@ Telegram-бот получает спортивные новости из GNews,
 1. Планировщик запускает цикл по `NEWS_POLL_MINUTES`.
 2. При `NEWS_TOPIC_ROTATION=true` за цикл проверяется только одна тема по кругу (`football`, `tennis`, `hockey`, `basketball`).
 3. Бот получает до `GNEWS_MAX_RESULTS` новостей из GNews.
-4. Перед AI-обработкой бот проверяет антидубль по `article_hash` в SQLite: в БД сохраняются `article_hash`, `url`, `status`, `sent_to_channel`; после рестарта эти записи повторно читаются из БД.
+4. Перед AI-обработкой бот сначала режет дубли прямо в ответе GNews по canonical URL / fingerprint заголовка, а потом проверяет антидубль по `article_hash`, `normalized_title` и похожим заголовкам в SQLite: в БД сохраняются `article_hash`, `url`, `status`, `sent_to_channel`; после рестарта эти записи повторно читаются из БД.
 5. Для новой статьи бот пытается извлечь полный текст через `trafilatura`, затем через `readability-lxml + BeautifulSoup`, затем через простой HTML parse.
 6. Если полный текст короткий или недоступен, используется fallback из `content`, либо `title + description`.
 7. OpenAI возвращает строго JSON с фильтром важности, казахским summary, ключевыми тезисами, optional betting impact-блоком и `image_prompt_en`.
@@ -81,6 +81,8 @@ python bot.py
 ## Дедупликация и restart-safe хранение
 
 - Источник истины для дедупликации — таблица `news_sent` в SQLite, а не память процесса.
+- Ещё до AI-обработки бот отбрасывает дубли внутри одного ответа GNews: нормализует URL, убирает tracking query params и сравнивает fingerprint заголовка.
 - При fetch каждая новая статья сохраняется в БД с `article_hash` и `url`; после успешной отправки запись обновляется с `status=posted` и `sent_to_channel=1`.
+- Если разные источники приносят один и тот же инфоповод с разными URL, бот дополнительно сравнивает похожесть заголовков и режет такие дубли до публикации.
 - Перед публикацией пайплайн повторно читает состояние статьи из БД и пропускает публикацию, если запись уже была отправлена (`sent_to_channel=1` или `status=posted`).
 - На Railway SQLite-файл нужно хранить только в persistent volume. Используй `NEWS_DB_PATH=${RAILWAY_VOLUME_MOUNT_PATH}/news_bot.sqlite3` или аналогичный путь внутри volume.
