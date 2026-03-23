@@ -81,6 +81,16 @@ class NewsPipeline:
         return await self.fal_image_service.generate_news_image(ai_result.image_prompt_en)
 
     async def _publish_article(self, article: dict[str, Any]) -> str:
+        article_state = self.repository.get_article_state(article["article_hash"])
+        if article_state and self.repository.should_skip_publication(article["article_hash"]):
+            logger.info(
+                "[SEND] duplicate skipped before publish title=%s status=%s sent_to_channel=%s",
+                article.get("title"),
+                article_state.get("status"),
+                article_state.get("sent_to_channel"),
+            )
+            return "skipped"
+
         prepared = await self._prepare_article(article)
         ai_result = await self._build_ai_result(prepared)
         if not self.ranker.should_send(ai_result):
