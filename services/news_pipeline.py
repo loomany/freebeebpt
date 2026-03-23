@@ -113,12 +113,15 @@ class NewsPipeline:
         messages, formatted_text = await self.formatter.format_post(prepared, ai_result)
         image_url = await self._generate_image(ai_result)
         target_chat_id = self._target_chat_id()
-        status = await self.telegram_publisher.publish_news_post(
+        publish_result = await self.telegram_publisher.publish_news_post(
             chat_id=target_chat_id,
             messages=messages,
             image_url=image_url,
             article_title=prepared.get("title"),
         )
+        status = publish_result.status
+        if publish_result.error:
+            logger.info("[SEND STATUS] title=%s chat_id=%s status=%s error=%s", prepared.get("title"), target_chat_id, status, publish_result.error)
         sent_at = datetime.now(UTC).isoformat() if status == "posted" else None
         self.repository.update_sent_status(
             prepared["article_hash"],
@@ -225,13 +228,13 @@ class NewsPipeline:
             return "AI full test failed"
         messages, _ = await self.formatter.format_post(article, ai_result)
         image_url = await self._generate_image(ai_result)
-        status = await self.telegram_publisher.publish_news_post(
+        publish_result = await self.telegram_publisher.publish_news_post(
             chat_id=self.admin_id,
             messages=messages,
             image_url=image_url,
             article_title=article.get("title"),
         )
-        return f"Full test done: status={status}; score={ai_result.importance_score}; image={'yes' if image_url else 'no'}"
+        return f"Full test done: status={publish_result.status}; error={publish_result.error or 'none'}; score={ai_result.importance_score}; image={'yes' if image_url else 'no'}"
 
     async def run_news_test_raw(self, *, topic: str | None = None) -> str:
         article = await self._get_latest_prepared_article(topic)

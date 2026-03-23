@@ -64,6 +64,35 @@ def register_admin_news_handlers(dp: Dispatcher, *, context: dict[str, Any]) -> 
         summary = await news_pipeline.run_single_topic_cycle(topic, trigger="manual")
         await message.answer(summary)
 
+    @dp.message_handler(commands=["test_channel"])
+    async def test_channel_handler(message: types.Message):
+        if not await _ensure_admin(message):
+            return
+        channel_chat_id = context["news_channel_id"]
+        telegram_publisher = context["telegram_publisher"]
+        env_value = os.getenv("TELEGRAM_NEWS_CHAT_ID")
+        await message.answer(
+            f"Проверяю канал. TELEGRAM_NEWS_CHAT_ID={env_value!r}; target_chat_id={channel_chat_id!r}"
+        )
+        access_ok, access_message = await telegram_publisher.verify_channel_access(channel_chat_id)
+        publish_result = await telegram_publisher.publish_news_post(
+            chat_id=channel_chat_id,
+            messages=["test"],
+            image_url=None,
+            article_title="/test_channel",
+        )
+        await message.answer(
+            "\n".join(
+                [
+                    f"channel_access={access_ok}",
+                    f"channel_check={access_message}",
+                    f"status={publish_result.status}",
+                    f"error={publish_result.error or 'none'}",
+                    f"chat_id={publish_result.chat_id}",
+                ]
+            )
+        )
+
     @dp.message_handler(commands=["news_test"])
     async def news_test_handler(message: types.Message):
         if not await _ensure_admin(message):

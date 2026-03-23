@@ -186,6 +186,41 @@ class FormatterAndRankerTests(unittest.TestCase):
         self.assertIsNone(infer_news_category("", "", "Breaking update", "General sports bulletin"))
 
 
+class TelegramPublisherTests(unittest.IsolatedAsyncioTestCase):
+    async def test_publish_news_post_falls_back_to_send_message_after_send_photo_error(self):
+        bot = AsyncMock()
+        bot.send_photo.side_effect = RuntimeError("photo rejected")
+        bot.send_message = AsyncMock(return_value={"ok": True})
+        publisher = TelegramPublisher(bot)
+
+        result = await publisher.publish_news_post(
+            chat_id="-1003706297872",
+            messages=["hello world"],
+            image_url="https://example.com/image.png",
+            article_title="Story",
+        )
+
+        self.assertEqual(result.status, "posted")
+        self.assertEqual(result.chat_id, "-1003706297872")
+        bot.send_message.assert_awaited_once_with(
+            chat_id="-1003706297872",
+            text="hello world",
+            disable_web_page_preview=True,
+        )
+
+    async def test_verify_channel_access_reports_missing_admin_rights(self):
+        bot = AsyncMock()
+        bot.get_chat = AsyncMock(return_value=type("Chat", (), {"title": "News", "type": "channel"})())
+        bot.get_me = AsyncMock(return_value=type("Me", (), {"id": 777})())
+        bot.get_chat_member = AsyncMock(return_value=type("Member", (), {"status": "member", "can_post_messages": None})())
+        publisher = TelegramPublisher(bot)
+
+        ok, message = await publisher.verify_channel_access("-1003706297872")
+
+        self.assertFalse(ok)
+        self.assertIn("bot must be administrator", message)
+
+
 class NewsPipelineTests(unittest.IsolatedAsyncioTestCase):
     async def test_run_single_topic_marks_extra_articles_as_queued(self):
         with TemporaryDirectory() as tmp_dir:
@@ -383,6 +418,65 @@ class NewsPipelineTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("skipped=1", summary)
             self.assertEqual(bot.send_message.await_count, 0)
             formatter.format_post.assert_not_called()
+
+    async def test_publish_article_uses_channel_chat_id_in_channel_mode(self):
+        with TemporaryDirectory() as tmp_dir:
+            repository = NewsRepository(Path(tmp_dir) / "test.sqlite3")
+            repository.save_sent_news(
+                NewsArticleRecord(
+                    topic="football",
+                    article_hash="key-channel",
+                    url="https://e/channel",
+                    title="T1",
+                    description=None,
+                    content=None,
+                    published_at=None,
+                    image=None,
+                    source_name="ESPN",
+                    source_url=None,
+                )
+            )
+            bot = AsyncMock()
+            formatter = AsyncMock()
+            formatter.format_post = AsyncMock(return_value=(["message"], "kk"))
+            ai_processor = AsyncMock()
+            ai_processor.process_news_with_ai = AsyncMock(
+                return_value=AINewsResult(
+                    is_important=True,
+                    importance_score=95,
+                    importance_level="top",
+                    category="football",
+                    rewritten_title_kk="T",
+                    summary_kk="S",
+                )
+            )
+            fal_image_service = AsyncMock()
+            publisher = TelegramPublisher(bot)
+            pipeline = NewsPipeline(
+                bot=bot,
+                repository=repository,
+                gnews_service=AsyncMock(),
+                formatter=formatter,
+                ai_processor=ai_processor,
+                ranker=NewsRanker(min_score=75),
+                telegram_publisher=publisher,
+                fal_image_service=fal_image_service,
+                admin_id=12345,
+                news_channel_id="-1003706297872",
+                news_post_mode="channel",
+            )
+            pipeline.extract_enabled = False
+
+            status = await pipeline._publish_article(
+                {"article_hash": "key-channel", "topic": "football", "title": "Channel story", "source_name": "ESPN", "url": "https://e/channel"}
+            )
+
+            self.assertEqual(status, "posted")
+            bot.send_message.assert_awaited_once_with(
+                chat_id="-1003706297872",
+                text="message",
+                disable_web_page_preview=True,
+            )
 
 
 if __name__ == "__main__":
