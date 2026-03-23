@@ -4,9 +4,10 @@ import json
 import logging
 import os
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
-from services.dedup import build_article_hash
+from services.dedup import build_article_hash, canonicalize_url, title_fingerprint
 from services.news_fetcher import FetchResult, NewsFetcher
 from services.news_repository import NewsArticleRecord, NewsRepository
 
@@ -53,11 +54,32 @@ class GNewsService:
             "published_at": article.get("publishedAt"),
         }
 
+    def _build_batch_dedupe_key(self, article: dict[str, Any]) -> str:
+        canonical_url = canonicalize_url(article.get("url"))
+        if canonical_url:
+            return f"url::{canonical_url}"
+
+        published_at = article.get("published_at") or ""
+        published_bucket = published_at
+        if published_at:
+            try:
+                published_bucket = datetime.fromisoformat(published_at.replace("Z", "+00:00")).strftime("%Y-%m-%dT%H")
+            except ValueError:
+                published_bucket = published_at[:13]
+        fingerprint = ",".join(sorted(title_fingerprint(article.get("title"))))
+        return f"title::{published_bucket}::{fingerprint}"
+
     async def fetch_topic_news(self, topic: str) -> FetchTopicResult:
         fetch_result: FetchResult = await self.fetcher.fetch_gnews_articles(topic)
         new_articles: list[dict[str, Any]] = []
+        seen_batch_keys: set[str] = set()
         for raw_article in fetch_result.articles:
             article = self._normalize_article(topic, raw_article)
+            batch_key = self._build_batch_dedupe_key(article)
+            if batch_key in seen_batch_keys:
+                logger.info("[GNEWS FILTER] batch duplicate skipped title=%s source=%s key=%s", article["title"], article.get("source_name"), batch_key)
+                continue
+            seen_batch_keys.add(batch_key)
             article_hash = build_article_hash(article.get("url"), article.get("source_name"), article.get("title"))
             article["article_hash"] = article_hash
             if self.repository.is_duplicate_news(article.get("url"), article.get("title"), article.get("source_name")):
