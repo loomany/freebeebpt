@@ -6,3 +6,5 @@ beautifulsoup4
 readability-lxml
 trafilatura
 pydantic>=2.0.0
+fal-client
+httpx

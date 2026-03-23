@@ -36,6 +36,10 @@ class NewsArticleRecord:
     summary_kk: str | None = None
     betting_impact_kk: str | None = None
     team_impact_kk: str | None = None
+    image_prompt_en: str | None = None
+    generated_image_url: str | None = None
+    send_reason: str | None = None
+    skip_reason: str | None = None
 
 
 class NewsRepository:
@@ -80,6 +84,10 @@ class NewsRepository:
                     summary_kk TEXT,
                     betting_impact_kk TEXT,
                     team_impact_kk TEXT,
+                    image_prompt_en TEXT,
+                    generated_image_url TEXT,
+                    send_reason TEXT,
+                    skip_reason TEXT,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
@@ -110,6 +118,10 @@ class NewsRepository:
                 "summary_kk": "ALTER TABLE news_sent ADD COLUMN summary_kk TEXT",
                 "betting_impact_kk": "ALTER TABLE news_sent ADD COLUMN betting_impact_kk TEXT",
                 "team_impact_kk": "ALTER TABLE news_sent ADD COLUMN team_impact_kk TEXT",
+                "image_prompt_en": "ALTER TABLE news_sent ADD COLUMN image_prompt_en TEXT",
+                "generated_image_url": "ALTER TABLE news_sent ADD COLUMN generated_image_url TEXT",
+                "send_reason": "ALTER TABLE news_sent ADD COLUMN send_reason TEXT",
+                "skip_reason": "ALTER TABLE news_sent ADD COLUMN skip_reason TEXT",
             }
             for column, statement in migrations.items():
                 if column not in existing_columns:
@@ -132,8 +144,9 @@ class NewsRepository:
                     article_hash, source_name, title, url, published_at, sent_at, topic, status,
                     description, content, image, source_url, translated_text, raw_payload,
                     importance_score, importance_level, rewritten_title_kk, summary_kk,
-                    betting_impact_kk, team_impact_kk, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    betting_impact_kk, team_impact_kk, image_prompt_en, generated_image_url,
+                    send_reason, skip_reason, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(article_hash) DO UPDATE SET
                     sent_at = COALESCE(excluded.sent_at, news_sent.sent_at),
                     status = excluded.status,
@@ -144,6 +157,10 @@ class NewsRepository:
                     summary_kk = COALESCE(excluded.summary_kk, news_sent.summary_kk),
                     betting_impact_kk = COALESCE(excluded.betting_impact_kk, news_sent.betting_impact_kk),
                     team_impact_kk = COALESCE(excluded.team_impact_kk, news_sent.team_impact_kk),
+                    image_prompt_en = COALESCE(excluded.image_prompt_en, news_sent.image_prompt_en),
+                    generated_image_url = COALESCE(excluded.generated_image_url, news_sent.generated_image_url),
+                    send_reason = COALESCE(excluded.send_reason, news_sent.send_reason),
+                    skip_reason = COALESCE(excluded.skip_reason, news_sent.skip_reason),
                     updated_at = CURRENT_TIMESTAMP
                 """,
                 (
@@ -167,6 +184,10 @@ class NewsRepository:
                     record.summary_kk,
                     record.betting_impact_kk,
                     record.team_impact_kk,
+                    record.image_prompt_en,
+                    record.generated_image_url,
+                    record.send_reason,
+                    record.skip_reason,
                 ),
             )
 
@@ -183,6 +204,10 @@ class NewsRepository:
         summary_kk: str | None = None,
         betting_impact_kk: str | None = None,
         team_impact_kk: str | None = None,
+        image_prompt_en: str | None = None,
+        generated_image_url: str | None = None,
+        send_reason: str | None = None,
+        skip_reason: str | None = None,
     ) -> None:
         with self._connect() as connection:
             connection.execute(
@@ -197,6 +222,10 @@ class NewsRepository:
                     summary_kk = COALESCE(?, summary_kk),
                     betting_impact_kk = COALESCE(?, betting_impact_kk),
                     team_impact_kk = COALESCE(?, team_impact_kk),
+                    image_prompt_en = COALESCE(?, image_prompt_en),
+                    generated_image_url = COALESCE(?, generated_image_url),
+                    send_reason = COALESCE(?, send_reason),
+                    skip_reason = COALESCE(?, skip_reason),
                     updated_at = CURRENT_TIMESTAMP
                 WHERE article_hash = ?
                 """,
@@ -210,6 +239,10 @@ class NewsRepository:
                     summary_kk,
                     betting_impact_kk,
                     team_impact_kk,
+                    image_prompt_en,
+                    generated_image_url,
+                    send_reason,
+                    skip_reason,
                     article_hash,
                 ),
             )

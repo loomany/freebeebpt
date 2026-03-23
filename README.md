@@ -1,6 +1,6 @@
 # FreeBeeBPT News Bot
 
-Telegram-бот получает спортивные новости из GNews, извлекает полный текст статьи, прогоняет материал через OpenAI-фильтр и отправляет в Telegram только короткую важную выжимку на казахском языке.
+Telegram-бот получает спортивные новости из GNews, извлекает полный текст статьи, прогоняет материал через OpenAI-фильтр, генерирует новую вертикальную картинку через fal Nano Banana и отправляет в Telegram только AI-текст + AI-картинку.
 
 ## Пайплайн
 
@@ -10,8 +10,10 @@ Telegram-бот получает спортивные новости из GNews,
 4. Перед AI-обработкой бот проверяет антидубль по `url`, а если URL нет — по `source_name + normalized_title`.
 5. Для новой статьи бот пытается извлечь полный текст через `trafilatura`, затем через `readability-lxml + BeautifulSoup`, затем через простой HTML parse.
 6. Если полный текст короткий или недоступен, используется fallback из `content`, либо `title + description`.
-7. OpenAI возвращает строго JSON с фильтром важности, казахским summary, ключевыми тезисами и optional impact-блоками.
-8. Бот отправляет только новости с `importance_score >= NEWS_IMPORTANCE_MIN_SCORE` и `importance_level in {high, top}`.
+7. OpenAI возвращает строго JSON с фильтром важности, казахским summary, ключевыми тезисами, optional impact-блоками и `image_prompt_en`.
+8. Для важных новостей бот вызывает fal Nano Banana c `aspect_ratio=9:16` и получает новую картинку.
+9. В Telegram уходит только сгенерированная картинка и AI-текст без source URL и без image из news API.
+10. Бот отправляет только новости с `importance_score >= NEWS_IMPORTANCE_MIN_SCORE` и `importance_level in {high, top}`.
 
 ## Новые переменные окружения
 
@@ -27,14 +29,24 @@ Telegram-бот получает спортивные новости из GNews,
 - `ARTICLE_EXTRACT_ENABLED=true`
 - `ARTICLE_EXTRACT_TIMEOUT=15`
 - `ARTICLE_MIN_TEXT_LENGTH=800`
-- `SEND_PHOTO_ENABLED=true`
 - `OPENAI_API_KEY`
 - `OPENAI_ENABLED=true`
 - `OPENAI_MODEL=gpt-5.4`
 - `NEWS_IMPORTANCE_MIN_SCORE=75`
+- `FAL_KEY`
+- `FAL_MODEL=fal-ai/nano-banana-2`
+- `FAL_IMAGE_ASPECT_RATIO=9:16`
+- `FAL_IMAGE_NUM=1`
+- `FAL_IMAGE_OUTPUT_FORMAT=png`
+- `FAL_IMAGE_RESOLUTION=2K`
+- `FAL_SAFETY_TOLERANCE=4`
+- `FAL_TIMEOUT_SECONDS=90`
 - `BOT_TOKEN`
 - `ADMIN_ID`
 - `TELEGRAM_NEWS_CHAT_ID`
+- `TELEGRAM_DISABLE_LINKS=true`
+- `SEND_TEXT_IF_IMAGE_FAIL=true`
+- `USE_NEWS_API_IMAGES=false`
 - `NEWS_POST_MODE=admin|channel`
 - `LOG_LEVEL`
 
@@ -45,6 +57,8 @@ Telegram-бот получает спортивные новости из GNews,
 - `/fetch_topic football|tennis|hockey|basketball`
 - `/news_test`
 - `/news_test_ai`
+- `/news_test_image`
+- `/news_test_full`
 - `/news_test_raw`
 - `/news_test_compare`
 

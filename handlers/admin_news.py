@@ -80,6 +80,22 @@ def register_admin_news_handlers(dp: Dispatcher, *, context: dict[str, Any]) -> 
         summary = await news_pipeline.run_news_test_ai()
         await message.answer(summary)
 
+    @dp.message_handler(commands=["news_test_image"])
+    async def news_test_image_handler(message: types.Message):
+        if not await _ensure_admin(message):
+            return
+        await message.answer("Запускаю image-тест новости...")
+        summary = await news_pipeline.run_news_test_image()
+        await message.answer(summary)
+
+    @dp.message_handler(commands=["news_test_full"])
+    async def news_test_full_handler(message: types.Message):
+        if not await _ensure_admin(message):
+            return
+        await message.answer("Запускаю полный preview news pipeline...")
+        summary = await news_pipeline.run_news_test_full()
+        await message.answer(summary)
+
     @dp.message_handler(commands=["news_test_raw"])
     async def news_test_raw_handler(message: types.Message):
         if not await _ensure_admin(message):
