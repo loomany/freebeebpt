@@ -60,6 +60,35 @@ class NewsRepositoryTests(unittest.TestCase):
                 )
             )
 
+    def test_duplicate_news_detected_for_similar_titles_from_different_sources(self):
+        with TemporaryDirectory() as tmp_dir:
+            repository = NewsRepository(Path(tmp_dir) / "test.sqlite3")
+            repository.save_sent_news(
+                NewsArticleRecord(
+                    topic="tennis",
+                    article_hash="korda-one",
+                    url="https://example.com/korda-1",
+                    title="Sebastian Korda stuns Carlos Alcaraz in Miami Open upset",
+                    description=None,
+                    content=None,
+                    published_at="2026-03-22T10:00:00Z",
+                    image=None,
+                    source_name="ESPN",
+                    source_url=None,
+                    status="posted",
+                    sent_to_channel=True,
+                ),
+                sent_at="2026-03-22T10:05:00Z",
+            )
+
+            self.assertTrue(
+                repository.is_duplicate_news(
+                    "https://example.com/korda-2",
+                    "Korda shocks Alcaraz in Miami Open third round",
+                    "Sky Sports",
+                )
+            )
+
     def test_sent_to_channel_persists_across_repository_restart(self):
         with TemporaryDirectory() as tmp_dir:
             db_path = Path(tmp_dir) / "test.sqlite3"

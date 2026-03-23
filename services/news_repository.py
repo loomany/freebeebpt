@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterator
 
-from services.dedup import build_article_hash, normalize_title
+from services.dedup import build_article_hash, normalize_title, titles_look_duplicate
 
 logger = logging.getLogger(__name__)
 
@@ -179,10 +179,25 @@ class NewsRepository:
                 (article_hash, normalized_title, article_hash),
             ).fetchone()
 
+    def _has_similar_recent_title(self, normalized_title: str) -> bool:
+        if not normalized_title:
+            return False
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT normalized_title
+                FROM news_sent
+                WHERE normalized_title != ''
+                ORDER BY created_at DESC
+                LIMIT 200
+                """
+            ).fetchall()
+        return any(titles_look_duplicate(normalized_title, row["normalized_title"]) for row in rows)
+
     def is_duplicate_news(self, url: str | None, title: str, source_name: str | None = None) -> bool:
         article_hash = build_article_hash(url, source_name, title)
         normalized = normalize_title(title)
-        return self._get_news_row_by_identity(article_hash, normalized) is not None
+        return self._get_news_row_by_identity(article_hash, normalized) is not None or self._has_similar_recent_title(normalized)
 
     def should_skip_publication(self, article_hash: str) -> bool:
         row = self._get_news_row_by_hash(article_hash)
