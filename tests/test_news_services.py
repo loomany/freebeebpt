@@ -6,6 +6,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, patch
 
 from services.ai_news_processor import (
+    AINewsProcessor,
     AINewsResult,
     build_image_prompt_fallback,
     ensure_ai_result_category,
@@ -530,6 +531,44 @@ class FormatterAndRankerTests(unittest.TestCase):
 
         self.assertIn("Novak Djokovic", names)
         self.assertIn("Carlos Alcaraz", names)
+
+
+class AINewsProcessorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_process_news_with_ai_backfills_kazakh_copy_for_manual_preview(self):
+        client = AsyncMock()
+        client.responses.create = AsyncMock(
+            side_effect=[
+                AsyncMock(
+                    output_text=(
+                        '{"is_important": false, "importance_score": 20, "importance_level": "low", '
+                        '"category": "football", "image_prompt_en": "vertical sports poster", "skip_reason": "low"}'
+                    )
+                ),
+                AsyncMock(
+                    output_text=(
+                        '{"rewritten_title_kk": "Барселона ЛЧ жолдамасын алды", '
+                        '"summary_kk": "Барселона келесі маусымдағы Чемпиондар лигасының негізгі кезеңіне жолдама алды.", '
+                        '"key_points_kk": ["Команда үздік төрттіктен төмен түспейді"]}'
+                    )
+                ),
+            ]
+        )
+        processor = AINewsProcessor(client=client)
+
+        result = await processor.process_news_with_ai(
+            topic="manual",
+            title="Барселона первой обеспечила себе участие в Лиге чемпионов на сезон-2026/27",
+            description="",
+            article_text="Барселона первой среди всех клубов гарантировала себе участие в основном этапе Лиги чемпионов сезона-2026/27.",
+            source_name="manual_admin_input",
+            published_at="2026-03-23T00:00:00Z",
+        )
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.rewritten_title_kk, "Барселона ЛЧ жолдамасын алды")
+        self.assertIn("Чемпиондар лигасының", result.summary_kk)
+        self.assertEqual(client.responses.create.await_count, 2)
 
 
 class TelegramPublisherTests(unittest.IsolatedAsyncioTestCase):

@@ -79,7 +79,8 @@ def build_news_user_prompt(payload: dict[str, Any]) -> str:
         "5. Если в TEAM_OR_PLAYER_NAMES есть имя спортсмена или команды, используй эти сущности в image_prompt_en как главный ориентир для сцены.\n"
         "6. Проверь, чтобы gender/sex presentation на картинке не противоречил тексту новости. Если новость про мужчину — не описывай женщину, и наоборот.\n"
         "7. image_prompt_en должен быть безопасным, без логотипов, без текста в кадре и без точного запроса на лицо реального человека.\n"
-        "8. Верни строго JSON.\n\n"
+        "8. Если SPORT=manual, всё равно обязательно заполни rewritten_title_kk и summary_kk на казахском, даже когда is_important=false.\n"
+        "9. Верни строго JSON.\n\n"
         "INPUT_JSON:\n{input_json}"
     ).format(
         topic=payload.get("topic", ""),
