@@ -263,6 +263,38 @@ class NewsRepository:
             return None
         return dict(row)
 
+    def get_callback_article_ref(self, article_hash: str) -> str | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT id
+                FROM news_sent
+                WHERE article_hash = ?
+                LIMIT 1
+                """,
+                (article_hash,),
+            ).fetchone()
+        if row is None:
+            return None
+        return str(row["id"])
+
+    def resolve_callback_article_hash(self, article_ref: str) -> str | None:
+        if not article_ref or not article_ref.isdigit():
+            return None
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT article_hash
+                FROM news_sent
+                WHERE id = ?
+                LIMIT 1
+                """,
+                (int(article_ref),),
+            ).fetchone()
+        if row is None:
+            return None
+        return str(row["article_hash"])
+
     def get_last_article_debug(self) -> dict[str, Any] | None:
         with self._connect() as connection:
             row = connection.execute(
