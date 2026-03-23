@@ -123,7 +123,6 @@ class NewsPipeline:
         fal_request_id: str | None,
         fal_status: str | None,
         fal_error: str | None,
-        allow_text_only: bool = False,
     ) -> str:
         if not self.admin_id:
             logger.error("[ADMIN PREVIEW] send failed error=ADMIN_ID is not configured")
@@ -132,18 +131,16 @@ class NewsPipeline:
 
         reply_markup = admin_news_review_keyboard(article["article_hash"])
         logger.info(
-            "[ADMIN PREVIEW] send start admin_id=%s article_hash=%s image=%s allow_text_only=%s",
+            "[ADMIN PREVIEW] send start admin_id=%s article_hash=%s image=%s",
             self.admin_id,
             article["article_hash"],
             bool(image_url),
-            allow_text_only,
         )
         publish_result = await self.telegram_publisher.publish_news_post(
             chat_id=self.admin_id,
             messages=messages,
             image_url=image_url,
             article_title=article.get("title"),
-            allow_text_only=allow_text_only,
             reply_markup=reply_markup,
         )
         if publish_result.status != "posted":
@@ -231,7 +228,7 @@ class NewsPipeline:
             self.repository.update_sent_status(prepared["article_hash"], "failed", skip_reason="ai_result_missing")
             return "failed"
 
-        passed_for_admin_preview = self.ranker.passed_for_admin_preview(ai_result)
+        passed_for_admin_preview = self._is_admin_review_mode() or self.ranker.passed_for_admin_preview(ai_result)
         passed_for_auto_publish = self.ranker.passed_for_auto_publish(ai_result)
         logger.info(
             "[AI] result important=%s score=%s level=%s admin_threshold=%s passed_for_admin_preview=%s auto_publish_threshold=%s passed_for_auto_publish=%s",
@@ -297,22 +294,6 @@ class NewsPipeline:
         )
 
         if not image_url:
-            if self._is_admin_review_mode() and not ai_result.is_important and fal_error == "image_prompt_en is empty":
-                logger.info(
-                    "[ADMIN PREVIEW] text-only fallback article_hash=%s reason=%s",
-                    prepared["article_hash"],
-                    fal_error,
-                )
-                return await self._send_admin_preview(
-                    article=prepared,
-                    messages=messages,
-                    formatted_text=formatted_text,
-                    image_url=None,
-                    fal_request_id=fal_request_id,
-                    fal_status=fal_status,
-                    fal_error=fal_error,
-                    allow_text_only=True,
-                )
             logger.error("[FAL] failed error=%s article_hash=%s", fal_error, prepared["article_hash"])
             await self._notify_admin_image_failure(prepared, ai_result, fal_error, fal_status, fal_request_id)
             return "image_failed"

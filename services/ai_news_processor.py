@@ -184,7 +184,7 @@ def ensure_ai_result_category(payload: dict[str, Any], *, topic: str, title: str
         team_or_player_names=team_or_player_names,
     )
     logger.info("[AI PROMPT] mode=%s", fallback_mode)
-    if enriched_payload.get("is_important") and not str(enriched_payload.get("image_prompt_en") or "").strip():
+    if not str(enriched_payload.get("image_prompt_en") or "").strip():
         enriched_payload["image_prompt_en"] = fallback_prompt
         logger.info("[AI PROMPT] fallback used")
     return enriched_payload
