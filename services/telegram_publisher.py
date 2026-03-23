@@ -5,6 +5,8 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
+from aiogram.types import InlineKeyboardMarkup
+
 from services.formatter import TELEGRAM_MESSAGE_LIMIT
 
 logger = logging.getLogger(__name__)
@@ -67,6 +69,7 @@ class TelegramPublisher:
         messages: list[str],
         image_url: str | None,
         article_title: str | None,
+        reply_markup: InlineKeyboardMarkup | None = None,
     ) -> PublishResult:
         if chat_id is None:
             logger.error("[SEND] target chat is not configured")
@@ -90,9 +93,9 @@ class TelegramPublisher:
         if image_url:
             try:
                 if len(caption) <= TELEGRAM_MESSAGE_LIMIT:
-                    response = await self.bot.send_photo(chat_id=chat_id, photo=image_url, caption=caption)
+                    response = await self.bot.send_photo(chat_id=chat_id, photo=image_url, caption=caption, reply_markup=reply_markup)
                 else:
-                    response = await self.bot.send_photo(chat_id=chat_id, photo=image_url)
+                    response = await self.bot.send_photo(chat_id=chat_id, photo=image_url, reply_markup=reply_markup)
                     overflow_messages = messages
                 logger.info("[SEND RESULT] method=send_photo chat_id=%s response=%r", chat_id, response)
                 sent_any = True
@@ -133,8 +136,14 @@ class TelegramPublisher:
             if not sent_any or overflow_messages:
                 response: Any = None
                 chunks_to_send = messages if not sent_any else overflow_messages
-                for chunk in chunks_to_send:
-                    response = await self.bot.send_message(chat_id=chat_id, text=chunk, disable_web_page_preview=True)
+                for index, chunk in enumerate(chunks_to_send):
+                    message_reply_markup = reply_markup if index == len(chunks_to_send) - 1 else None
+                    response = await self.bot.send_message(
+                        chat_id=chat_id,
+                        text=chunk,
+                        disable_web_page_preview=True,
+                        reply_markup=message_reply_markup,
+                    )
                 logger.info("[SEND RESULT] method=send_message chat_id=%s response=%r", chat_id, response)
                 sent_any = bool(chunks_to_send)
             return PublishResult(

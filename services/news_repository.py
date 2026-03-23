@@ -216,6 +216,28 @@ class NewsRepository:
             "sent_to_channel": bool(row["sent_to_channel"]),
         }
 
+    def get_article_delivery_payload(self, article_hash: str) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT article_hash, title, translated_text, generated_image_url, status, sent_to_channel
+                FROM news_sent
+                WHERE article_hash = ?
+                LIMIT 1
+                """,
+                (article_hash,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "article_hash": row["article_hash"],
+            "title": row["title"],
+            "translated_text": row["translated_text"],
+            "generated_image_url": row["generated_image_url"],
+            "status": row["status"],
+            "sent_to_channel": bool(row["sent_to_channel"]),
+        }
+
     def save_sent_news(self, record: NewsArticleRecord, *, sent_at: str | None = None) -> None:
         effective_sent_to_channel = record.sent_to_channel or record.status == "posted"
         with self._connect() as connection:
