@@ -172,16 +172,30 @@ class NewsPipeline:
             self.repository.update_sent_status(prepared["article_hash"], "failed", skip_reason="ai_result_missing")
             return "failed"
 
-        score_passed = self.ranker.should_send(ai_result)
+        passed_for_admin_preview = self.ranker.passed_for_admin_preview(ai_result)
+        passed_for_auto_publish = self.ranker.passed_for_auto_publish(ai_result)
         logger.info(
-            "[AI] result important=%s score=%s level=%s threshold=%s passed=%s",
+            "[AI] result important=%s score=%s level=%s admin_threshold=%s passed_for_admin_preview=%s auto_publish_threshold=%s passed_for_auto_publish=%s",
             ai_result.is_important,
             ai_result.importance_score,
             ai_result.importance_level,
+            self.ranker.admin_preview_min_score,
+            passed_for_admin_preview,
             self.ranker.min_score,
-            score_passed,
+            passed_for_auto_publish,
         )
-        if not score_passed:
+        logger.info(
+            "[ADMIN FILTER] score=%s threshold=%s passed=%s",
+            ai_result.importance_score,
+            self.ranker.admin_preview_min_score,
+            passed_for_admin_preview,
+        )
+        logger.info(
+            "[ADMIN FILTER] important=%s but allowed_for_preview=%s",
+            ai_result.is_important,
+            passed_for_admin_preview,
+        )
+        if not passed_for_admin_preview:
             self.repository.update_sent_status(
                 prepared["article_hash"],
                 "skipped",
@@ -193,9 +207,9 @@ class NewsPipeline:
                 betting_impact_kk=ai_result.betting_impact_kk,
                 image_prompt_en=ai_result.image_prompt_en,
                 send_reason=ai_result.send_reason,
-                skip_reason=ai_result.skip_reason or f"below_threshold:{self.ranker.min_score}",
+                skip_reason=ai_result.skip_reason or f"below_admin_preview_threshold:{self.ranker.admin_preview_min_score}",
             )
-            logger.info("[SEND] skipped title=%s reason=%s", prepared.get("title"), ai_result.skip_reason or "below threshold")
+            logger.info("[SEND] skipped title=%s reason=%s", prepared.get("title"), ai_result.skip_reason or "below admin preview threshold")
             return "skipped"
 
         messages, formatted_text = await self.formatter.format_post(prepared, ai_result)
