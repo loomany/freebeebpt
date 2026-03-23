@@ -190,6 +190,10 @@ def ensure_ai_result_category(payload: dict[str, Any], *, topic: str, title: str
     return enriched_payload
 
 
+def _needs_manual_kazakh_backfill(result: "AINewsResult", *, topic: str) -> bool:
+    return topic == "manual" and (not result.rewritten_title_kk.strip() or not result.summary_kk.strip())
+
+
 if PYDANTIC_AVAILABLE:
 
     class AINewsResult(BaseModel):
@@ -284,6 +288,56 @@ class AINewsProcessor:
         self.model = os.getenv("OPENAI_MODEL", "gpt-5.4")
         self.max_retries = 1
 
+    async def _backfill_manual_kazakh_fields(
+        self,
+        *,
+        topic: str,
+        title: str,
+        description: str,
+        article_text: str,
+        parsed: "AINewsResult",
+    ) -> "AINewsResult":
+        if not self.client or not _needs_manual_kazakh_backfill(parsed, topic=topic):
+            return parsed
+
+        try:
+            response = await self.client.responses.create(
+                model=self.model,
+                text={"format": {"type": "json_object"}},
+                input=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "Ты готовишь только казахский пересказ для админ-preview спортивной новости. "
+                            "Верни строго JSON с полями rewritten_title_kk, summary_kk, key_points_kk. "
+                            "rewritten_title_kk и summary_kk обязательны. key_points_kk — максимум 3 коротких пункта. "
+                            "Ничего не выдумывай и не добавляй markdown."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": json.dumps(
+                            {
+                                "title": title,
+                                "description": description,
+                                "article_text": article_text,
+                            },
+                            ensure_ascii=False,
+                        ),
+                    },
+                ],
+            )
+            payload = json.loads(response.output_text)
+            parsed.rewritten_title_kk = str(payload.get("rewritten_title_kk") or parsed.rewritten_title_kk).strip()
+            parsed.summary_kk = str(payload.get("summary_kk") or parsed.summary_kk).strip()
+            key_points = payload.get("key_points_kk")
+            if isinstance(key_points, list) and key_points:
+                parsed.key_points_kk = [str(item).strip() for item in key_points if str(item).strip()][:3]
+            logger.info("[AI] manual kk backfill success title=%s", title)
+        except Exception as error:  # noqa: BLE001
+            logger.warning("[AI] manual kk backfill failed title=%s error=%s", title, error)
+        return parsed
+
     async def process_news_with_ai(
         self,
         *,
@@ -337,6 +391,13 @@ class AINewsProcessor:
                 logger.info("[AI] important=%s score=%s level=%s", parsed.is_important, parsed.importance_score, parsed.importance_level)
                 logger.info("[AI] generated image prompt")
                 logger.info("[AI] betting_impact=%s", "yes" if parsed.betting_impact_kk else "no")
+                parsed = await self._backfill_manual_kazakh_fields(
+                    topic=topic,
+                    title=title,
+                    description=description,
+                    article_text=article_text,
+                    parsed=parsed,
+                )
                 logger.info("[AI] translation=kk success")
                 if not parsed.is_important:
                     logger.info("[AI] skipped reason=%s", parsed.skip_reason or "model marked as not important")
