@@ -28,6 +28,38 @@ class NewsRepositoryTests(unittest.TestCase):
             self.assertEqual(repository.increment_daily_requests("2026-03-22"), 1)
             self.assertEqual(repository.increment_daily_requests("2026-03-22", 2), 3)
 
+    def test_duplicate_news_detected_by_normalized_title_after_restart(self):
+        with TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "test.sqlite3"
+            repository = NewsRepository(db_path)
+            repository.save_sent_news(
+                NewsArticleRecord(
+                    topic="football",
+                    article_hash="title-only-key",
+                    url="https://example.com/old-link",
+                    title="Breaking: Messi Returns!",
+                    description=None,
+                    content=None,
+                    published_at="2026-03-22T10:00:00Z",
+                    image=None,
+                    source_name="ESPN",
+                    source_url=None,
+                    status="posted",
+                    sent_to_channel=True,
+                ),
+                sent_at="2026-03-22T10:05:00Z",
+            )
+
+            restarted_repository = NewsRepository(db_path)
+
+            self.assertTrue(
+                restarted_repository.is_duplicate_news(
+                    "https://example.com/new-link",
+                    "Breaking Messi returns",
+                    "Sky Sports",
+                )
+            )
+
     def test_sent_to_channel_persists_across_repository_restart(self):
         with TemporaryDirectory() as tmp_dir:
             db_path = Path(tmp_dir) / "test.sqlite3"
@@ -98,13 +130,13 @@ class GNewsServiceTests(unittest.IsolatedAsyncioTestCase):
                             "source": {"name": "ESPN", "url": "https://espn.com"},
                         },
                         {
-                            "title": "Story",
+                            "title": "Story!!!",
                             "description": "Desc",
                             "content": "Content",
-                            "url": "https://example.com/1",
+                            "url": "https://example.com/2?utm_source=dup",
                             "publishedAt": "2026-03-22T10:00:00Z",
                             "image": None,
-                            "source": {"name": "ESPN", "url": "https://espn.com"},
+                            "source": {"name": "Sky Sports", "url": "https://skysports.com"},
                         },
                     ]
                 }

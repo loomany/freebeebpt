@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterator
 
-from services.dedup import build_article_hash
+from services.dedup import build_article_hash, normalize_title
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +104,7 @@ class NewsRepository:
                     generated_image_url TEXT,
                     send_reason TEXT,
                     skip_reason TEXT,
+                    normalized_title TEXT NOT NULL DEFAULT '',
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
@@ -139,10 +140,20 @@ class NewsRepository:
                 "generated_image_url": "ALTER TABLE news_sent ADD COLUMN generated_image_url TEXT",
                 "send_reason": "ALTER TABLE news_sent ADD COLUMN send_reason TEXT",
                 "skip_reason": "ALTER TABLE news_sent ADD COLUMN skip_reason TEXT",
+                "normalized_title": "ALTER TABLE news_sent ADD COLUMN normalized_title TEXT NOT NULL DEFAULT ''",
             }
             for column, statement in migrations.items():
                 if column not in existing_columns:
                     connection.execute(statement)
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_news_sent_normalized_title ON news_sent(normalized_title)")
+            rows_to_backfill = connection.execute(
+                "SELECT article_hash, title FROM news_sent WHERE normalized_title = '' OR normalized_title IS NULL"
+            ).fetchall()
+            for row in rows_to_backfill:
+                connection.execute(
+                    "UPDATE news_sent SET normalized_title = ?, updated_at = CURRENT_TIMESTAMP WHERE article_hash = ?",
+                    (normalize_title(row["title"]), row["article_hash"]),
+                )
 
     def build_dedupe_key(self, url: str | None, title: str, published_at: str | None, source_name: str | None = None) -> str:
         return build_article_hash(url, source_name, title if published_at is None else f"{title} {published_at}")
@@ -154,9 +165,24 @@ class NewsRepository:
                 (article_hash,),
             ).fetchone()
 
+    def _get_news_row_by_identity(self, article_hash: str, normalized_title: str) -> sqlite3.Row | None:
+        with self._connect() as connection:
+            return connection.execute(
+                """
+                SELECT article_hash, url, status, sent_to_channel
+                FROM news_sent
+                WHERE article_hash = ?
+                   OR (normalized_title != '' AND normalized_title = ?)
+                ORDER BY CASE WHEN article_hash = ? THEN 0 ELSE 1 END
+                LIMIT 1
+                """,
+                (article_hash, normalized_title, article_hash),
+            ).fetchone()
+
     def is_duplicate_news(self, url: str | None, title: str, source_name: str | None = None) -> bool:
         article_hash = build_article_hash(url, source_name, title)
-        return self._get_news_row_by_hash(article_hash) is not None
+        normalized = normalize_title(title)
+        return self._get_news_row_by_identity(article_hash, normalized) is not None
 
     def should_skip_publication(self, article_hash: str) -> bool:
         row = self._get_news_row_by_hash(article_hash)
@@ -182,17 +208,21 @@ class NewsRepository:
                 """
                 INSERT INTO news_sent (
                     article_hash, source_name, title, url, published_at, sent_at, topic, status,
-                    sent_to_channel, description, content, image, source_url, translated_text, raw_payload,
+                    sent_to_channel, normalized_title, description, content, image, source_url, translated_text, raw_payload,
                     importance_score, importance_level, rewritten_title_kk, summary_kk,
                     betting_impact_kk, team_impact_kk, image_prompt_en, generated_image_url,
                     send_reason, skip_reason, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(article_hash) DO UPDATE SET
                     sent_at = COALESCE(excluded.sent_at, news_sent.sent_at),
                     status = excluded.status,
                     sent_to_channel = CASE
                         WHEN news_sent.sent_to_channel = 1 OR excluded.sent_to_channel = 1 OR excluded.status = 'posted' THEN 1
                         ELSE 0
+                    END,
+                    normalized_title = CASE
+                        WHEN excluded.normalized_title != '' THEN excluded.normalized_title
+                        ELSE news_sent.normalized_title
                     END,
                     translated_text = COALESCE(excluded.translated_text, news_sent.translated_text),
                     importance_score = COALESCE(excluded.importance_score, news_sent.importance_score),
@@ -217,6 +247,7 @@ class NewsRepository:
                     record.topic,
                     record.status,
                     int(effective_sent_to_channel),
+                    normalize_title(record.title),
                     record.description,
                     record.content,
                     record.image,
