@@ -13,10 +13,10 @@ def topup_keyboard() -> InlineKeyboardMarkup:
     return keyboard
 
 
-def admin_news_review_keyboard(article_hash: str) -> InlineKeyboardMarkup:
+def admin_news_review_keyboard(article_ref: str) -> InlineKeyboardMarkup:
     keyboard = InlineKeyboardMarkup(row_width=2)
     keyboard.add(
-        InlineKeyboardButton("✅ Опубликовать", callback_data=f"send_news:{article_hash}"),
-        InlineKeyboardButton("❌ Пропустить", callback_data=f"skip_news:{article_hash}"),
+        InlineKeyboardButton("✅ Опубликовать", callback_data=f"send_news:{article_ref}"),
+        InlineKeyboardButton("❌ Пропустить", callback_data=f"skip_news:{article_ref}"),
     )
     return keyboard
