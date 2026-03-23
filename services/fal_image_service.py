@@ -268,6 +268,30 @@ class FalImageService:
                     f"timed out after {self.timeout_seconds}s "
                     f"({self.max_poll_attempts} attempts x {self.poll_interval_seconds:.1f}s poll interval)"
                 )
+                if request_id:
+                    try:
+                        logger.warning("[FAL] timeout reached; checking final result request_id=%s", request_id)
+                        result_payload = await asyncio.wait_for(
+                            self._get_result(handle_or_payload, request_id),
+                            timeout=self.http_timeout_seconds,
+                        )
+                        logger.info("[FAL] late result payload = %s", result_payload)
+                        image_url = self._extract_image_url(result_payload)
+                        if image_url:
+                            logger.info("[FAL] recovered completed result after timeout request_id=%s", request_id)
+                            return FalGenerationResult(
+                                request_id=request_id,
+                                status="success",
+                                image_url=image_url,
+                                attempts=self.max_poll_attempts,
+                                payload=result_payload,
+                            )
+                    except Exception as late_result_error:  # noqa: BLE001
+                        logger.warning(
+                            "[FAL] late result fetch failed after timeout request_id=%s error=%s",
+                            request_id,
+                            late_result_error,
+                        )
                 logger.error("[FAL] timeout request_id=%s error=%s", request_id, timeout_error)
                 return FalGenerationResult(
                     request_id=request_id,
