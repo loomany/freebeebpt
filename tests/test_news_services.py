@@ -5,7 +5,13 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, patch
 
-from services.ai_news_processor import AINewsResult, ensure_ai_result_category, extract_team_or_player_names, infer_news_category
+from services.ai_news_processor import (
+    AINewsResult,
+    build_image_prompt_fallback,
+    ensure_ai_result_category,
+    extract_team_or_player_names,
+    infer_news_category,
+)
 from services.article_extractor import build_fallback_text, clean_article_text
 from services.dedup import build_article_hash
 from services.fal_image_service import FalGenerationResult, FalImageService
@@ -417,6 +423,51 @@ class FormatterAndRankerTests(unittest.TestCase):
         )
 
         self.assertEqual(payload["category"], "basketball")
+
+    def test_ensure_ai_result_category_builds_person_prompt_when_ai_prompt_empty(self):
+        payload = ensure_ai_result_category(
+            {
+                "is_important": True,
+                "importance_score": 90,
+                "importance_level": "top",
+                "rewritten_title_kk": "Месси оралды",
+                "summary_kk": "Қысқаша мазмұн",
+                "image_prompt_en": "",
+            },
+            topic="football",
+            title="Lionel Messi returns for Inter Miami",
+            description="The forward is back for a key MLS match.",
+            article_text="Lionel Messi could return to the lineup for Inter Miami this weekend.",
+            source_name="ESPN",
+            team_or_player_names=["Lionel Messi", "Inter Miami"],
+        )
+
+        self.assertIn("Lionel Messi", payload["image_prompt_en"])
+
+    def test_build_image_prompt_fallback_uses_team_mode_without_person_name(self):
+        prompt, mode = build_image_prompt_fallback(
+            title="Inter Miami vs LA Galaxy showdown moved to prime time",
+            description="A major MLS clash now gets a bigger stage.",
+            article_text="The match between Inter Miami and LA Galaxy will headline the weekend schedule.",
+            category="football",
+            team_or_player_names=["Inter Miami", "LA Galaxy"],
+        )
+
+        self.assertEqual(mode, "team")
+        self.assertIn("Inter Miami vs LA Galaxy", prompt)
+
+    def test_build_image_prompt_fallback_uses_generic_mode_when_entities_missing(self):
+        prompt, mode = build_image_prompt_fallback(
+            title="Late injury update changes the outlook before a crucial playoff game",
+            description="Coaches are adjusting plans ahead of tipoff.",
+            article_text="A major basketball injury report has shifted expectations before tonight's playoff game.",
+            category="basketball",
+            team_or_player_names=[],
+        )
+
+        self.assertEqual(mode, "generic")
+        self.assertTrue(prompt)
+        self.assertIn("basketball editorial news scene", prompt)
 
     def test_infer_news_category_has_no_default_football(self):
         self.assertIsNone(infer_news_category("", "", "Breaking update", "General sports bulletin"))
