@@ -49,10 +49,19 @@ class NewsArticleRecord:
     importance_level: str | None = None
     rewritten_title_kk: str | None = None
     summary_kk: str | None = None
+    key_points_json: str | None = None
     betting_impact_kk: str | None = None
     team_impact_kk: str | None = None
     image_prompt_en: str | None = None
     generated_image_url: str | None = None
+    image_local_path: str | None = None
+    sent_to_admin: bool = False
+    admin_message_id: int | None = None
+    published_to_channel: bool = False
+    channel_message_id: int | None = None
+    skipped_by_admin: bool = False
+    fal_status: str | None = None
+    fal_error: str | None = None
     send_reason: str | None = None
     skip_reason: str | None = None
 
@@ -98,10 +107,19 @@ class NewsRepository:
                     importance_level TEXT,
                     rewritten_title_kk TEXT,
                     summary_kk TEXT,
+                    key_points_json TEXT,
                     betting_impact_kk TEXT,
                     team_impact_kk TEXT,
                     image_prompt_en TEXT,
                     generated_image_url TEXT,
+                    image_local_path TEXT,
+                    sent_to_admin INTEGER NOT NULL DEFAULT 0,
+                    admin_message_id INTEGER,
+                    published_to_channel INTEGER NOT NULL DEFAULT 0,
+                    channel_message_id INTEGER,
+                    skipped_by_admin INTEGER NOT NULL DEFAULT 0,
+                    fal_status TEXT,
+                    fal_error TEXT,
                     send_reason TEXT,
                     skip_reason TEXT,
                     normalized_title TEXT NOT NULL DEFAULT '',
@@ -134,10 +152,19 @@ class NewsRepository:
                 "importance_level": "ALTER TABLE news_sent ADD COLUMN importance_level TEXT",
                 "rewritten_title_kk": "ALTER TABLE news_sent ADD COLUMN rewritten_title_kk TEXT",
                 "summary_kk": "ALTER TABLE news_sent ADD COLUMN summary_kk TEXT",
+                "key_points_json": "ALTER TABLE news_sent ADD COLUMN key_points_json TEXT",
                 "betting_impact_kk": "ALTER TABLE news_sent ADD COLUMN betting_impact_kk TEXT",
                 "team_impact_kk": "ALTER TABLE news_sent ADD COLUMN team_impact_kk TEXT",
                 "image_prompt_en": "ALTER TABLE news_sent ADD COLUMN image_prompt_en TEXT",
                 "generated_image_url": "ALTER TABLE news_sent ADD COLUMN generated_image_url TEXT",
+                "image_local_path": "ALTER TABLE news_sent ADD COLUMN image_local_path TEXT",
+                "sent_to_admin": "ALTER TABLE news_sent ADD COLUMN sent_to_admin INTEGER NOT NULL DEFAULT 0",
+                "admin_message_id": "ALTER TABLE news_sent ADD COLUMN admin_message_id INTEGER",
+                "published_to_channel": "ALTER TABLE news_sent ADD COLUMN published_to_channel INTEGER NOT NULL DEFAULT 0",
+                "channel_message_id": "ALTER TABLE news_sent ADD COLUMN channel_message_id INTEGER",
+                "skipped_by_admin": "ALTER TABLE news_sent ADD COLUMN skipped_by_admin INTEGER NOT NULL DEFAULT 0",
+                "fal_status": "ALTER TABLE news_sent ADD COLUMN fal_status TEXT",
+                "fal_error": "ALTER TABLE news_sent ADD COLUMN fal_error TEXT",
                 "send_reason": "ALTER TABLE news_sent ADD COLUMN send_reason TEXT",
                 "skip_reason": "ALTER TABLE news_sent ADD COLUMN skip_reason TEXT",
                 "normalized_title": "ALTER TABLE news_sent ADD COLUMN normalized_title TEXT NOT NULL DEFAULT ''",
@@ -220,7 +247,9 @@ class NewsRepository:
         with self._connect() as connection:
             row = connection.execute(
                 """
-                SELECT article_hash, title, translated_text, generated_image_url, status, sent_to_channel
+                SELECT article_hash, title, translated_text, generated_image_url, status,
+                       sent_to_channel, published_to_channel, sent_to_admin, admin_message_id,
+                       channel_message_id, skipped_by_admin, fal_status, fal_error
                 FROM news_sent
                 WHERE article_hash = ?
                 LIMIT 1
@@ -229,32 +258,41 @@ class NewsRepository:
             ).fetchone()
         if row is None:
             return None
-        return {
-            "article_hash": row["article_hash"],
-            "title": row["title"],
-            "translated_text": row["translated_text"],
-            "generated_image_url": row["generated_image_url"],
-            "status": row["status"],
-            "sent_to_channel": bool(row["sent_to_channel"]),
-        }
+        return dict(row)
+
+    def get_last_article_debug(self) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT id, article_hash, topic, title, status, importance_score, importance_level,
+                       image_prompt_en, generated_image_url, sent_to_admin, admin_message_id,
+                       published_to_channel, channel_message_id, skipped_by_admin,
+                       fal_status, fal_error, send_reason, skip_reason, created_at, updated_at
+                FROM news_sent
+                ORDER BY id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+        return dict(row) if row else None
 
     def save_sent_news(self, record: NewsArticleRecord, *, sent_at: str | None = None) -> None:
-        effective_sent_to_channel = record.sent_to_channel or record.status == "posted"
+        effective_sent_to_channel = record.sent_to_channel or record.published_to_channel or record.status == "posted"
         with self._connect() as connection:
             connection.execute(
                 """
                 INSERT INTO news_sent (
                     article_hash, source_name, title, url, published_at, sent_at, topic, status,
                     sent_to_channel, normalized_title, description, content, image, source_url, translated_text, raw_payload,
-                    importance_score, importance_level, rewritten_title_kk, summary_kk,
-                    betting_impact_kk, team_impact_kk, image_prompt_en, generated_image_url,
-                    send_reason, skip_reason, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    importance_score, importance_level, rewritten_title_kk, summary_kk, key_points_json,
+                    betting_impact_kk, team_impact_kk, image_prompt_en, generated_image_url, image_local_path,
+                    sent_to_admin, admin_message_id, published_to_channel, channel_message_id, skipped_by_admin,
+                    fal_status, fal_error, send_reason, skip_reason, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(article_hash) DO UPDATE SET
                     sent_at = COALESCE(excluded.sent_at, news_sent.sent_at),
                     status = excluded.status,
                     sent_to_channel = CASE
-                        WHEN news_sent.sent_to_channel = 1 OR excluded.sent_to_channel = 1 OR excluded.status = 'posted' THEN 1
+                        WHEN news_sent.sent_to_channel = 1 OR excluded.sent_to_channel = 1 OR excluded.published_to_channel = 1 OR excluded.status = 'posted' THEN 1
                         ELSE 0
                     END,
                     normalized_title = CASE
@@ -266,41 +304,32 @@ class NewsRepository:
                     importance_level = COALESCE(excluded.importance_level, news_sent.importance_level),
                     rewritten_title_kk = COALESCE(excluded.rewritten_title_kk, news_sent.rewritten_title_kk),
                     summary_kk = COALESCE(excluded.summary_kk, news_sent.summary_kk),
+                    key_points_json = COALESCE(excluded.key_points_json, news_sent.key_points_json),
                     betting_impact_kk = COALESCE(excluded.betting_impact_kk, news_sent.betting_impact_kk),
                     team_impact_kk = COALESCE(excluded.team_impact_kk, news_sent.team_impact_kk),
                     image_prompt_en = COALESCE(excluded.image_prompt_en, news_sent.image_prompt_en),
                     generated_image_url = COALESCE(excluded.generated_image_url, news_sent.generated_image_url),
+                    image_local_path = COALESCE(excluded.image_local_path, news_sent.image_local_path),
+                    sent_to_admin = CASE WHEN excluded.sent_to_admin = 1 THEN 1 ELSE news_sent.sent_to_admin END,
+                    admin_message_id = COALESCE(excluded.admin_message_id, news_sent.admin_message_id),
+                    published_to_channel = CASE WHEN excluded.published_to_channel = 1 OR excluded.status = 'posted' THEN 1 ELSE news_sent.published_to_channel END,
+                    channel_message_id = COALESCE(excluded.channel_message_id, news_sent.channel_message_id),
+                    skipped_by_admin = CASE WHEN excluded.skipped_by_admin = 1 THEN 1 ELSE news_sent.skipped_by_admin END,
+                    fal_status = COALESCE(excluded.fal_status, news_sent.fal_status),
+                    fal_error = COALESCE(excluded.fal_error, news_sent.fal_error),
                     send_reason = COALESCE(excluded.send_reason, news_sent.send_reason),
                     skip_reason = COALESCE(excluded.skip_reason, news_sent.skip_reason),
                     updated_at = CURRENT_TIMESTAMP
                 """,
                 (
-                    record.article_hash,
-                    record.source_name,
-                    record.title,
-                    record.url,
-                    record.published_at,
-                    sent_at,
-                    record.topic,
-                    record.status,
-                    int(effective_sent_to_channel),
-                    normalize_title(record.title),
-                    record.description,
-                    record.content,
-                    record.image,
-                    record.source_url,
-                    record.translated_text,
-                    record.raw_payload,
-                    record.importance_score,
-                    record.importance_level,
-                    record.rewritten_title_kk,
-                    record.summary_kk,
-                    record.betting_impact_kk,
-                    record.team_impact_kk,
-                    record.image_prompt_en,
-                    record.generated_image_url,
-                    record.send_reason,
-                    record.skip_reason,
+                    record.article_hash, record.source_name, record.title, record.url, record.published_at, sent_at,
+                    record.topic, record.status, int(effective_sent_to_channel), normalize_title(record.title),
+                    record.description, record.content, record.image, record.source_url, record.translated_text,
+                    record.raw_payload, record.importance_score, record.importance_level, record.rewritten_title_kk,
+                    record.summary_kk, record.key_points_json, record.betting_impact_kk, record.team_impact_kk,
+                    record.image_prompt_en, record.generated_image_url, record.image_local_path, int(record.sent_to_admin),
+                    record.admin_message_id, int(record.published_to_channel), record.channel_message_id,
+                    int(record.skipped_by_admin), record.fal_status, record.fal_error, record.send_reason, record.skip_reason,
                 ),
             )
 
@@ -315,10 +344,19 @@ class NewsRepository:
         importance_level: str | None = None,
         rewritten_title_kk: str | None = None,
         summary_kk: str | None = None,
+        key_points_json: str | None = None,
         betting_impact_kk: str | None = None,
         team_impact_kk: str | None = None,
         image_prompt_en: str | None = None,
         generated_image_url: str | None = None,
+        image_local_path: str | None = None,
+        sent_to_admin: bool | None = None,
+        admin_message_id: int | None = None,
+        published_to_channel: bool | None = None,
+        channel_message_id: int | None = None,
+        skipped_by_admin: bool | None = None,
+        fal_status: str | None = None,
+        fal_error: str | None = None,
         send_reason: str | None = None,
         skip_reason: str | None = None,
     ) -> None:
@@ -328,7 +366,7 @@ class NewsRepository:
                 UPDATE news_sent
                 SET status = ?,
                     sent_to_channel = CASE
-                        WHEN ? = 'posted' THEN 1
+                        WHEN ? = 'posted' OR COALESCE(?, 0) = 1 THEN 1
                         ELSE sent_to_channel
                     END,
                     translated_text = COALESCE(?, translated_text),
@@ -337,31 +375,32 @@ class NewsRepository:
                     importance_level = COALESCE(?, importance_level),
                     rewritten_title_kk = COALESCE(?, rewritten_title_kk),
                     summary_kk = COALESCE(?, summary_kk),
+                    key_points_json = COALESCE(?, key_points_json),
                     betting_impact_kk = COALESCE(?, betting_impact_kk),
                     team_impact_kk = COALESCE(?, team_impact_kk),
                     image_prompt_en = COALESCE(?, image_prompt_en),
                     generated_image_url = COALESCE(?, generated_image_url),
+                    image_local_path = COALESCE(?, image_local_path),
+                    sent_to_admin = COALESCE(?, sent_to_admin),
+                    admin_message_id = COALESCE(?, admin_message_id),
+                    published_to_channel = COALESCE(?, published_to_channel),
+                    channel_message_id = COALESCE(?, channel_message_id),
+                    skipped_by_admin = COALESCE(?, skipped_by_admin),
+                    fal_status = COALESCE(?, fal_status),
+                    fal_error = COALESCE(?, fal_error),
                     send_reason = COALESCE(?, send_reason),
                     skip_reason = COALESCE(?, skip_reason),
                     updated_at = CURRENT_TIMESTAMP
                 WHERE article_hash = ?
                 """,
                 (
-                    status,
-                    status,
-                    translated_text,
-                    sent_at,
-                    importance_score,
-                    importance_level,
-                    rewritten_title_kk,
-                    summary_kk,
-                    betting_impact_kk,
-                    team_impact_kk,
-                    image_prompt_en,
-                    generated_image_url,
-                    send_reason,
-                    skip_reason,
-                    article_hash,
+                    status, status, int(bool(published_to_channel)) if published_to_channel is not None else None,
+                    translated_text, sent_at, importance_score, importance_level, rewritten_title_kk, summary_kk,
+                    key_points_json, betting_impact_kk, team_impact_kk, image_prompt_en, generated_image_url,
+                    image_local_path, int(sent_to_admin) if sent_to_admin is not None else None, admin_message_id,
+                    int(published_to_channel) if published_to_channel is not None else None, channel_message_id,
+                    int(skipped_by_admin) if skipped_by_admin is not None else None, fal_status, fal_error,
+                    send_reason, skip_reason, article_hash,
                 ),
             )
 
@@ -418,10 +457,10 @@ class NewsRepository:
             total_posted = connection.execute("SELECT COUNT(*) FROM news_sent WHERE status = 'posted'").fetchone()[0]
             total_failed = connection.execute("SELECT COUNT(*) FROM news_sent WHERE status = 'failed'").fetchone()[0]
         return {
-            "total_saved_articles": int(total_saved),
-            "total_posted_articles": int(total_posted),
-            "total_failed_articles": int(total_failed),
             "last_fetch_time": self.get_meta("last_fetch_time"),
             "last_topic": self.get_meta("last_topic"),
             "db_path": str(self.db_path),
+            "total_saved_articles": total_saved,
+            "total_posted_articles": total_posted,
+            "total_failed_articles": total_failed,
         }

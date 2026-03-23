@@ -14,6 +14,9 @@ def topup_keyboard() -> InlineKeyboardMarkup:
 
 
 def admin_news_review_keyboard(article_hash: str) -> InlineKeyboardMarkup:
-    keyboard = InlineKeyboardMarkup()
-    keyboard.add(InlineKeyboardButton("📢 Отправить в канал", callback_data=f"send_news:{article_hash}"))
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        InlineKeyboardButton("✅ Опубликовать", callback_data=f"send_news:{article_hash}"),
+        InlineKeyboardButton("❌ Пропустить", callback_data=f"skip_news:{article_hash}"),
+    )
     return keyboard
