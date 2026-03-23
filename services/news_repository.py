@@ -41,6 +41,7 @@ class NewsArticleRecord:
     image: str | None
     source_name: str | None
     source_url: str | None
+    source_type: str = "gnews"
     status: str = "new"
     sent_to_channel: bool = False
     translated_text: str | None = None
@@ -102,6 +103,7 @@ class NewsRepository:
                     content TEXT,
                     image TEXT,
                     source_url TEXT,
+                    source_type TEXT NOT NULL DEFAULT 'gnews',
                     translated_text TEXT,
                     raw_payload TEXT,
                     importance_score INTEGER,
@@ -171,6 +173,7 @@ class NewsRepository:
                 "send_reason": "ALTER TABLE news_sent ADD COLUMN send_reason TEXT",
                 "skip_reason": "ALTER TABLE news_sent ADD COLUMN skip_reason TEXT",
                 "normalized_title": "ALTER TABLE news_sent ADD COLUMN normalized_title TEXT NOT NULL DEFAULT ''",
+                "source_type": "ALTER TABLE news_sent ADD COLUMN source_type TEXT NOT NULL DEFAULT 'gnews'",
             }
             for column, statement in migrations.items():
                 if column not in existing_columns:
@@ -250,7 +253,7 @@ class NewsRepository:
         with self._connect() as connection:
             row = connection.execute(
                 """
-                SELECT article_hash, title, translated_text, generated_image_url, status,
+                SELECT article_hash, title, translated_text, generated_image_url, status, source_type,
                        sent_to_channel, published_to_channel, sent_to_admin, admin_message_id,
                        channel_message_id, skipped_by_admin, fal_request_id, fal_status, fal_error
                 FROM news_sent
@@ -299,7 +302,7 @@ class NewsRepository:
         with self._connect() as connection:
             row = connection.execute(
                 """
-                SELECT id, article_hash, topic, title, status, importance_score, importance_level,
+                SELECT id, article_hash, topic, title, status, source_type, importance_score, importance_level,
                        image_prompt_en, generated_image_url, sent_to_admin, admin_message_id,
                        published_to_channel, channel_message_id, skipped_by_admin,
                        fal_request_id, fal_status, fal_error, send_reason, skip_reason, created_at, updated_at
@@ -317,12 +320,12 @@ class NewsRepository:
                 """
                 INSERT INTO news_sent (
                     article_hash, source_name, title, url, published_at, sent_at, topic, status,
-                    sent_to_channel, normalized_title, description, content, image, source_url, translated_text, raw_payload,
+                    sent_to_channel, normalized_title, description, content, image, source_url, source_type, translated_text, raw_payload,
                     importance_score, importance_level, rewritten_title_kk, summary_kk, key_points_json,
                     betting_impact_kk, team_impact_kk, image_prompt_en, generated_image_url, image_local_path,
                     sent_to_admin, admin_message_id, published_to_channel, channel_message_id, skipped_by_admin,
                     fal_request_id, fal_status, fal_error, send_reason, skip_reason, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(article_hash) DO UPDATE SET
                     sent_at = COALESCE(excluded.sent_at, news_sent.sent_at),
                     status = excluded.status,
@@ -334,6 +337,7 @@ class NewsRepository:
                         WHEN excluded.normalized_title != '' THEN excluded.normalized_title
                         ELSE news_sent.normalized_title
                     END,
+                    source_type = COALESCE(excluded.source_type, news_sent.source_type),
                     translated_text = COALESCE(excluded.translated_text, news_sent.translated_text),
                     importance_score = COALESCE(excluded.importance_score, news_sent.importance_score),
                     importance_level = COALESCE(excluded.importance_level, news_sent.importance_level),
@@ -360,7 +364,7 @@ class NewsRepository:
                 (
                     record.article_hash, record.source_name, record.title, record.url, record.published_at, sent_at,
                     record.topic, record.status, int(effective_sent_to_channel), normalize_title(record.title),
-                    record.description, record.content, record.image, record.source_url, record.translated_text,
+                    record.description, record.content, record.image, record.source_url, record.source_type, record.translated_text,
                     record.raw_payload, record.importance_score, record.importance_level, record.rewritten_title_kk,
                     record.summary_kk, record.key_points_json, record.betting_impact_kk, record.team_impact_kk,
                     record.image_prompt_en, record.generated_image_url, record.image_local_path, int(record.sent_to_admin),

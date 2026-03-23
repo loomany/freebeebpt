@@ -602,6 +602,104 @@ class TelegramPublisherTests(unittest.IsolatedAsyncioTestCase):
 
 
 class NewsPipelineTests(unittest.IsolatedAsyncioTestCase):
+
+    async def test_process_manual_news_forces_preview_and_saves_source_type(self):
+        with TemporaryDirectory() as tmp_dir:
+            repository = NewsRepository(Path(tmp_dir) / "test.sqlite3")
+            bot = AsyncMock()
+            formatter = AsyncMock()
+            formatter.format_post = AsyncMock(return_value=(["message"], "kk"))
+            ai_processor = AsyncMock()
+            ai_processor.process_news_with_ai = AsyncMock(
+                return_value=AINewsResult(
+                    is_important=False,
+                    importance_score=5,
+                    importance_level="low",
+                    category="basketball",
+                    rewritten_title_kk="Қолмен енгізілген жаңалық",
+                    summary_kk="Қысқа мазмұн",
+                    key_points_kk=["Бірінші", "Екінші"],
+                    image_prompt_en="",
+                    skip_reason="not important, but manual",
+                )
+            )
+            fal_image_service = AsyncMock()
+            fal_image_service.generate_news_image = AsyncMock(
+                return_value=FalGenerationResult(request_id="req-manual", status="completed", image_url="https://img/manual.png")
+            )
+            pipeline = NewsPipeline(
+                bot=bot,
+                repository=repository,
+                gnews_service=AsyncMock(),
+                formatter=formatter,
+                ai_processor=ai_processor,
+                ranker=NewsRanker(min_score=75, admin_preview_min_score=75),
+                telegram_publisher=TelegramPublisher(bot),
+                fal_image_service=fal_image_service,
+                admin_id=1,
+                news_channel_id="-100123",
+                news_post_mode="admin",
+            )
+            pipeline.extract_enabled = False
+
+            status = await pipeline.process_manual_news("Luka Doncic avoided suspension after a technical was rescinded.")
+
+            self.assertEqual(status, "review_pending")
+            fal_image_service.generate_news_image.assert_awaited_once()
+            fallback_prompt = fal_image_service.generate_news_image.await_args.args[0]
+            self.assertIn("vertical sports poster", fallback_prompt)
+            state = repository.get_last_article_debug()
+            self.assertEqual(state["status"], "review_pending")
+            self.assertEqual(state["source_type"], "manual")
+            payload = repository.get_article_delivery_payload(state["article_hash"])
+            self.assertEqual(payload["source_type"], "manual")
+            self.assertTrue(payload["sent_to_admin"])
+            self.assertEqual(payload["generated_image_url"], "https://img/manual.png")
+
+    async def test_process_manual_news_sends_text_preview_when_fal_fails(self):
+        with TemporaryDirectory() as tmp_dir:
+            repository = NewsRepository(Path(tmp_dir) / "test.sqlite3")
+            bot = AsyncMock()
+            formatter = AsyncMock()
+            formatter.format_post = AsyncMock(return_value=(["message"], "kk"))
+            ai_processor = AsyncMock()
+            ai_processor.process_news_with_ai = AsyncMock(
+                return_value=AINewsResult(
+                    is_important=False,
+                    importance_score=1,
+                    importance_level="low",
+                    category="football",
+                    rewritten_title_kk="T",
+                    summary_kk="S",
+                    image_prompt_en="poster",
+                )
+            )
+            fal_image_service = AsyncMock()
+            fal_image_service.generate_news_image = AsyncMock(
+                return_value=FalGenerationResult(request_id="req-fail", status="failed", error="boom")
+            )
+            pipeline = NewsPipeline(
+                bot=bot,
+                repository=repository,
+                gnews_service=AsyncMock(),
+                formatter=formatter,
+                ai_processor=ai_processor,
+                ranker=NewsRanker(min_score=75),
+                telegram_publisher=TelegramPublisher(bot),
+                fal_image_service=fal_image_service,
+                admin_id=1,
+                news_channel_id="-100123",
+                news_post_mode="admin",
+            )
+            pipeline.extract_enabled = False
+
+            status = await pipeline.process_manual_news("Manual football update")
+
+            self.assertEqual(status, "review_pending")
+            bot.send_message.assert_awaited()
+            payload = repository.get_article_delivery_payload(repository.get_last_article_debug()["article_hash"])
+            self.assertIsNone(payload["generated_image_url"])
+            self.assertEqual(payload["fal_status"], "failed")
     async def test_run_single_topic_marks_extra_articles_as_queued(self):
         with TemporaryDirectory() as tmp_dir:
             repository = NewsRepository(Path(tmp_dir) / "test.sqlite3")
