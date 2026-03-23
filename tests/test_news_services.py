@@ -29,6 +29,14 @@ class FalImageServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(service._normalize_status({"status": "COMPLETED"}), "COMPLETED")
 
+    def test_extract_image_url_reads_nested_data_images_payload(self):
+        service = FalImageService()
+
+        self.assertEqual(
+            service._extract_image_url({"data": {"images": [{"url": "https://img.test/nested.png"}]}}),
+            "https://img.test/nested.png",
+        )
+
     async def test_generate_news_image_completes_and_fetches_result_after_completed_status(self):
         with patch.dict(os.environ, {"FAL_KEY": "test-key", "FAL_TIMEOUT_SECONDS": "6", "FAL_POLL_INTERVAL_SECONDS": "0.01"}, clear=False):
             service = FalImageService()
@@ -36,7 +44,7 @@ class FalImageServiceTests(unittest.IsolatedAsyncioTestCase):
             service.max_poll_attempts = 3
             service._submit = AsyncMock(return_value=(object(), "req-123"))
             service._poll_status = AsyncMock(side_effect=[{"status": "IN_PROGRESS"}, {"status": "COMPLETED"}])
-            service._get_result = AsyncMock(return_value={"images": [{"url": "https://img.test/generated.png"}]})
+            service._get_result = AsyncMock(return_value={"data": {"images": [{"url": "https://img.test/generated.png"}]}})
 
             result = await service.generate_news_image("poster prompt")
 
@@ -59,7 +67,7 @@ class FalImageServiceTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(result.status, "failed")
             self.assertEqual(result.request_id, "req-empty")
-            self.assertEqual(result.error, "response does not contain images[0].url")
+            self.assertEqual(result.error, "response does not contain data.images[0].url")
             self.assertEqual(service._poll_status.await_count, 1)
             service._get_result.assert_awaited_once()
 
