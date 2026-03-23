@@ -36,6 +36,26 @@ GNEWS_API_KEY = os.getenv("GNEWS_API_KEY")
 if not GNEWS_API_KEY:
     logger.error("GNEWS_API_KEY не задан")
 
+
+def validate_runtime_config() -> None:
+    news_enabled = os.getenv("NEWS_ENABLED", "true").lower() == "true"
+    if not BOT_TOKEN:
+        logger.error("BOT_TOKEN не задан")
+    if not ADMIN_ID and NEWS_POST_MODE == "admin":
+        logger.error("ADMIN_ID не задан при NEWS_POST_MODE=admin: новости некому отправлять")
+    if NEWS_POST_MODE == "channel" and not NEWS_CHANNEL_ID:
+        logger.error("TELEGRAM_NEWS_CHAT_ID/NEWS_CHANNEL_ID не задан при NEWS_POST_MODE=channel")
+    if not news_enabled:
+        logger.warning("NEWS_ENABLED=false: планировщик новостей отключен")
+    logger.info(
+        "[NEWS CONFIG] enabled=%s mode=%s admin_id=%s channel_id=%r poll_minutes=%s",
+        news_enabled,
+        NEWS_POST_MODE,
+        ADMIN_ID,
+        NEWS_CHANNEL_ID,
+        os.getenv("NEWS_POLL_MINUTES", "15"),
+    )
+
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 client = AsyncOpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
@@ -86,6 +106,7 @@ async def start_handler(message: types.Message):
 
 
 async def on_startup(_: Dispatcher) -> None:
+    validate_runtime_config()
     if NEWS_CHANNEL_ID:
         access_ok, access_message = await telegram_publisher.verify_channel_access(NEWS_CHANNEL_ID)
         logger.info("[STARTUP CHANNEL CHECK] ok=%s chat_id=%s message=%s", access_ok, NEWS_CHANNEL_ID, access_message)
