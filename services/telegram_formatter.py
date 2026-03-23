@@ -4,6 +4,9 @@ from services.formatter import TELEGRAM_MESSAGE_LIMIT, TOPIC_LABELS
 from services.ai_news_processor import AINewsResult, infer_news_category
 
 
+BETTING_IMPACT_LABEL_KK = "📊 Беттингке әсері:"
+
+
 def format_ai_news_message(topic: str, result: AINewsResult) -> list[str]:
     category = infer_news_category(result.category) or infer_news_category(topic)
     category_label = TOPIC_LABELS.get(category, (category or topic or "news").title())
@@ -21,9 +24,7 @@ def format_ai_news_message(topic: str, result: AINewsResult) -> list[str]:
             *[f"• {point}" for point in result.key_points_kk],
         ])
     if result.betting_impact_kk:
-        parts.extend(["", "📊 Ставкаға әсері:", result.betting_impact_kk.strip()])
-    if result.team_impact_kk:
-        parts.extend(["", "👥 Командаға әсері:", result.team_impact_kk.strip()])
+        parts.extend(["", BETTING_IMPACT_LABEL_KK, result.betting_impact_kk.strip()])
 
     full_text = "\n".join(part for part in parts if part is not None).strip()
     if len(full_text) <= TELEGRAM_MESSAGE_LIMIT:
