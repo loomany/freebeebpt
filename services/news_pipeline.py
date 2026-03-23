@@ -6,6 +6,7 @@ import os
 from datetime import UTC, datetime
 from typing import Any
 
+from keyboards import admin_news_review_keyboard
 from services.article_extractor import build_fallback_text, extract_article_text
 from services.ai_news_processor import extract_team_or_player_names
 from services.gnews_service import TOPICS
@@ -46,6 +47,9 @@ class NewsPipeline:
         self.extract_enabled = os.getenv("ARTICLE_EXTRACT_ENABLED", "true").lower() == "true"
         self.extract_timeout = int(os.getenv("ARTICLE_EXTRACT_TIMEOUT", "15"))
         self.article_min_text_length = int(os.getenv("ARTICLE_MIN_TEXT_LENGTH", "800"))
+
+    def _is_admin_review_mode(self) -> bool:
+        return self.news_post_mode == "admin"
 
     def _target_chat_id(self) -> int | str | None:
         if self.news_post_mode == "channel":
@@ -88,6 +92,30 @@ class NewsPipeline:
             return None
         return await self.fal_image_service.generate_news_image(ai_result.image_prompt_en)
 
+    async def send_article_to_channel(self, article_hash: str) -> str:
+        article_state = self.repository.get_article_delivery_payload(article_hash)
+        if not article_state:
+            return "not_found"
+        if article_state["sent_to_channel"]:
+            return "already_sent"
+        translated_text = (article_state.get("translated_text") or "").strip()
+        if not translated_text:
+            return "missing_text"
+        publish_result = await self.telegram_publisher.publish_news_post(
+            chat_id=self.news_channel_id,
+            messages=[translated_text],
+            image_url=article_state.get("generated_image_url"),
+            article_title=article_state.get("title"),
+        )
+        if publish_result.status != "posted":
+            return publish_result.error or "failed"
+        self.repository.update_sent_status(
+            article_hash,
+            "posted",
+            sent_at=datetime.now(UTC).isoformat(),
+        )
+        return "posted"
+
     async def _publish_article(self, article: dict[str, Any]) -> str:
         article_state = self.repository.get_article_state(article["article_hash"])
         if article_state and self.repository.should_skip_publication(article["article_hash"]):
@@ -101,38 +129,54 @@ class NewsPipeline:
 
         prepared = await self._prepare_article(article)
         ai_result = await self._build_ai_result(prepared)
-        if not self.ranker.should_send(ai_result):
+        if not ai_result:
             self.repository.update_sent_status(
                 prepared["article_hash"],
                 "skipped",
-                importance_score=ai_result.importance_score if ai_result else None,
-                importance_level=ai_result.importance_level if ai_result else None,
-                rewritten_title_kk=ai_result.rewritten_title_kk if ai_result else None,
-                summary_kk=ai_result.summary_kk if ai_result else None,
-                betting_impact_kk=ai_result.betting_impact_kk if ai_result else None,
-                image_prompt_en=ai_result.image_prompt_en if ai_result else None,
-                send_reason=ai_result.send_reason if ai_result else None,
-                skip_reason=ai_result.skip_reason if ai_result else None,
             )
-            logger.info("[SEND] skipped title=%s", prepared.get("title"))
             return "skipped"
 
         messages, formatted_text = await self.formatter.format_post(prepared, ai_result)
         image_url = await self._generate_image(ai_result)
+        admin_review_mode = self._is_admin_review_mode()
+        should_send_to_target = admin_review_mode or self.ranker.should_send(ai_result)
+        if not should_send_to_target:
+            self.repository.update_sent_status(
+                prepared["article_hash"],
+                "skipped",
+                translated_text=formatted_text,
+                importance_score=ai_result.importance_score,
+                importance_level=ai_result.importance_level,
+                rewritten_title_kk=ai_result.rewritten_title_kk,
+                summary_kk=ai_result.summary_kk,
+                betting_impact_kk=ai_result.betting_impact_kk,
+                image_prompt_en=ai_result.image_prompt_en,
+                generated_image_url=image_url,
+                send_reason=ai_result.send_reason,
+                skip_reason=ai_result.skip_reason,
+            )
+            logger.info("[SEND] skipped title=%s", prepared.get("title"))
+            return "skipped"
+
         target_chat_id = self._target_chat_id()
+        reply_markup = None
+        if admin_review_mode:
+            reply_markup = admin_news_review_keyboard(prepared["article_hash"])
         publish_result = await self.telegram_publisher.publish_news_post(
             chat_id=target_chat_id,
             messages=messages,
             image_url=image_url,
             article_title=prepared.get("title"),
+            reply_markup=reply_markup,
         )
         status = publish_result.status
+        persisted_status = "review_pending" if admin_review_mode and status == "posted" else status
         if publish_result.error:
             logger.info("[SEND STATUS] title=%s chat_id=%s status=%s error=%s", prepared.get("title"), target_chat_id, status, publish_result.error)
-        sent_at = datetime.now(UTC).isoformat() if status == "posted" else None
+        sent_at = datetime.now(UTC).isoformat() if status == "posted" and not admin_review_mode else None
         self.repository.update_sent_status(
             prepared["article_hash"],
-            status,
+            persisted_status,
             translated_text=formatted_text,
             sent_at=sent_at,
             importance_score=ai_result.importance_score,
@@ -145,21 +189,22 @@ class NewsPipeline:
             send_reason=ai_result.send_reason,
             skip_reason=ai_result.skip_reason,
         )
-        return status
+        return persisted_status
 
     async def run_single_topic_cycle(self, topic: str, *, trigger: str) -> str:
         result = await self.gnews_service.fetch_topic_news(topic)
         published = 0
         queued = 0
         skipped = 0
+        max_posts = None if self._is_admin_review_mode() else MAX_POSTS_PER_TOPIC_PER_CYCLE
         for index, article in enumerate(result.new_articles):
             logger.info("[NEWS] fetched article topic=%s title=%s", topic, article.get("title"))
-            if index >= MAX_POSTS_PER_TOPIC_PER_CYCLE:
+            if max_posts is not None and index >= max_posts:
                 self.repository.update_sent_status(article["article_hash"], "queued")
                 queued += 1
                 continue
             status = await self._publish_article(article)
-            if status == "posted":
+            if status in {"posted", "review_pending"}:
                 published += 1
             elif status == "skipped":
                 skipped += 1
