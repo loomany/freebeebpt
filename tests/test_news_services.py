@@ -1,8 +1,9 @@
+import os
 from datetime import UTC, datetime
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from services.ai_news_processor import AINewsResult, ensure_ai_result_category, extract_team_or_player_names, infer_news_category
 from services.article_extractor import build_fallback_text, clean_article_text
@@ -325,7 +326,7 @@ class FormatterAndRankerTests(unittest.TestCase):
 
 
 class TelegramPublisherTests(unittest.IsolatedAsyncioTestCase):
-    async def test_publish_news_post_falls_back_to_send_message_after_send_photo_error(self):
+    async def test_publish_news_post_fails_when_send_photo_errors_and_image_is_required(self):
         bot = AsyncMock()
         bot.send_photo.side_effect = RuntimeError("photo rejected")
         bot.send_message = AsyncMock(return_value={"ok": True})
@@ -338,8 +339,42 @@ class TelegramPublisherTests(unittest.IsolatedAsyncioTestCase):
             article_title="Story",
         )
 
-        self.assertEqual(result.status, "posted")
+        self.assertEqual(result.status, "failed")
         self.assertEqual(result.chat_id, "-1003706297872")
+        bot.send_message.assert_not_awaited()
+
+    async def test_publish_news_post_fails_when_image_missing_and_image_is_required(self):
+        bot = AsyncMock()
+        bot.send_message = AsyncMock(return_value={"ok": True})
+        publisher = TelegramPublisher(bot)
+
+        result = await publisher.publish_news_post(
+            chat_id="-1003706297872",
+            messages=["hello world"],
+            image_url=None,
+            article_title="Story",
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.error, "image_url is required for news post")
+        bot.send_photo.assert_not_called()
+        bot.send_message.assert_not_awaited()
+
+    async def test_publish_news_post_can_fall_back_to_send_message_when_image_is_optional(self):
+        bot = AsyncMock()
+        bot.send_photo.side_effect = RuntimeError("photo rejected")
+        bot.send_message = AsyncMock(return_value={"ok": True})
+        with patch.dict(os.environ, {"REQUIRE_IMAGE_FOR_NEWS_POST": "false", "SEND_TEXT_IF_IMAGE_FAIL": "true"}):
+            publisher = TelegramPublisher(bot)
+
+            result = await publisher.publish_news_post(
+                chat_id="-1003706297872",
+                messages=["hello world"],
+                image_url="https://example.com/image.png",
+                article_title="Story",
+            )
+
+        self.assertEqual(result.status, "posted")
         bot.send_message.assert_awaited_once_with(
             chat_id="-1003706297872",
             text="hello world",
@@ -624,9 +659,11 @@ class NewsPipelineTests(unittest.IsolatedAsyncioTestCase):
                     category="football",
                     rewritten_title_kk="T",
                     summary_kk="S",
+                    image_prompt_en="vertical sports poster",
                 )
             )
             fal_image_service = AsyncMock()
+            fal_image_service.generate_news_image = AsyncMock(return_value="https://img.test/generated.png")
             publisher = TelegramPublisher(bot)
             pipeline = NewsPipeline(
                 bot=bot,
@@ -648,10 +685,10 @@ class NewsPipelineTests(unittest.IsolatedAsyncioTestCase):
             )
 
             self.assertEqual(status, "posted")
-            bot.send_message.assert_awaited_once_with(
+            bot.send_photo.assert_awaited_once_with(
                 chat_id="-1003706297872",
-                text="message",
-                disable_web_page_preview=True,
+                photo="https://img.test/generated.png",
+                caption="message",
             )
 
 

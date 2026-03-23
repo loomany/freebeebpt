@@ -45,7 +45,8 @@ Telegram-бот получает спортивные новости из GNews,
 - `ADMIN_ID`
 - `TELEGRAM_NEWS_CHAT_ID`
 - `TELEGRAM_DISABLE_LINKS=true`
-- `SEND_TEXT_IF_IMAGE_FAIL=true`
+- `REQUIRE_IMAGE_FOR_NEWS_POST=true`
+- `SEND_TEXT_IF_IMAGE_FAIL=false`
 - `USE_NEWS_API_IMAGES=false`
 - `NEWS_POST_MODE=admin|channel`
 - `LOG_LEVEL`

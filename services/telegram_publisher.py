@@ -23,7 +23,8 @@ class PublishResult:
 class TelegramPublisher:
     def __init__(self, bot) -> None:
         self.bot = bot
-        self.send_text_if_image_fail = os.getenv("SEND_TEXT_IF_IMAGE_FAIL", "true").lower() == "true"
+        self.require_image_for_news_post = os.getenv("REQUIRE_IMAGE_FOR_NEWS_POST", "true").lower() == "true"
+        self.send_text_if_image_fail = os.getenv("SEND_TEXT_IF_IMAGE_FAIL", "false").lower() == "true"
 
     @staticmethod
     def _format_error(error: Exception) -> str:
@@ -104,7 +105,7 @@ class TelegramPublisher:
                     error_text,
                     exc_info=True,
                 )
-                if not self.send_text_if_image_fail:
+                if self.require_image_for_news_post or not self.send_text_if_image_fail:
                     return PublishResult(
                         status="failed",
                         error=error_text,
@@ -116,6 +117,16 @@ class TelegramPublisher:
                 overflow_messages = messages
                 logger.info("[SEND] send_photo failed; switching to send_message fallback chat_id=%s", chat_id)
         else:
+            if self.require_image_for_news_post:
+                logger.error("[SEND] no image_url and image is required chat_id=%s title=%s", chat_id, article_title)
+                return PublishResult(
+                    status="failed",
+                    error="image_url is required for news post",
+                    chat_id=chat_id,
+                    used_image=False,
+                    text_length=text_length,
+                    send_method="send_photo",
+                )
             logger.info("[SEND] no image_url; using send_message chat_id=%s", chat_id)
 
         try:
