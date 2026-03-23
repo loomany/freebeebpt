@@ -12,6 +12,12 @@ from services.formatter import TELEGRAM_MESSAGE_LIMIT
 logger = logging.getLogger(__name__)
 
 
+
+def _safe_message_id(response: Any) -> int | None:
+    value = getattr(response, "message_id", None)
+    return value if isinstance(value, int) else None
+
+
 @dataclass
 class PublishResult:
     status: str
@@ -71,7 +77,9 @@ class TelegramPublisher:
         image_url: str | None,
         article_title: str | None,
         reply_markup: InlineKeyboardMarkup | None = None,
+        require_image: bool | None = None,
     ) -> PublishResult:
+        require_image = self.require_image_for_news_post if require_image is None else require_image
         if chat_id is None:
             logger.error("[SEND] target chat is not configured")
             return PublishResult(status="failed", error="target chat is not configured")
@@ -109,7 +117,7 @@ class TelegramPublisher:
                     error_text,
                     exc_info=True,
                 )
-                if self.require_image_for_news_post or not self.send_text_if_image_fail:
+                if require_image or not self.send_text_if_image_fail:
                     return PublishResult(
                         status="failed",
                         error=error_text,
@@ -121,7 +129,7 @@ class TelegramPublisher:
                 overflow_messages = messages
                 logger.info("[SEND] send_photo failed; switching to send_message fallback chat_id=%s", chat_id)
         else:
-            if self.require_image_for_news_post:
+            if require_image:
                 logger.error("[SEND] no image_url and image is required chat_id=%s title=%s", chat_id, article_title)
                 return PublishResult(
                     status="failed",
@@ -153,7 +161,7 @@ class TelegramPublisher:
                 used_image=bool(image_url),
                 text_length=text_length,
                 send_method="send_photo" if image_url and sent_any and not overflow_messages else "send_message",
-                message_id=getattr(response, "message_id", None),
+                message_id=_safe_message_id(response),
             )
         except Exception as error:  # noqa: BLE001
             error_text = self._format_error(error)

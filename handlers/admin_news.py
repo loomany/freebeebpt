@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
 
 from aiogram import Dispatcher, types
+from aiogram.dispatcher import FSMContext
 from aiogram.utils.exceptions import MessageNotModified
 
 from services.gnews_service import TOPICS
+from states import ManualNewsState
+
+logger = logging.getLogger(__name__)
 
 
 def register_admin_news_handlers(dp: Dispatcher, *, context: dict[str, Any]) -> None:
@@ -47,6 +52,51 @@ def register_admin_news_handlers(dp: Dispatcher, *, context: dict[str, Any]) -> 
                 ]
             )
         )
+
+    @dp.message_handler(commands=["new_state"])
+    async def new_state_handler(message: types.Message, state: FSMContext):
+        if not await _ensure_admin(message):
+            return
+        logger.info("[MANUAL NEWS] command received admin_id=%s", message.from_user.id)
+        await ManualNewsState.waiting_for_text.set()
+        logger.info("[MANUAL NEWS] waiting for text")
+        await message.answer("Отправьте текст новости одним сообщением")
+
+    @dp.message_handler(commands=["cancel"], state="*")
+    async def cancel_manual_news_handler(message: types.Message, state: FSMContext):
+        if not await _ensure_admin(message):
+            return
+        current_state = await state.get_state()
+        if current_state != ManualNewsState.waiting_for_text.state:
+            await message.answer("Нет активного режима ожидания новости")
+            return
+        await state.finish()
+        await message.answer("Ввод ручной новости отменён")
+
+    @dp.message_handler(state=ManualNewsState.waiting_for_text, content_types=types.ContentTypes.TEXT)
+    async def manual_news_text_handler(message: types.Message, state: FSMContext):
+        if not await _ensure_admin(message):
+            return
+        text = (message.text or "").strip()
+        if text.startswith("/cancel"):
+            await cancel_manual_news_handler(message, state)
+            return
+        if not text or text == "/new_state":
+            await message.answer("Текст новости пуст")
+            return
+        await state.finish()
+        status_message = await message.answer("Обрабатываю ручную новость...")
+        try:
+            result = await news_pipeline.process_manual_news(text)
+        except Exception as error:  # noqa: BLE001
+            logger.exception("[MANUAL NEWS] processing failed")
+            await status_message.edit_text(f"Ошибка обработки ручной новости: {error}")
+            return
+
+        if result == "review_pending":
+            await status_message.edit_text("Preview ручной новости отправлен")
+            return
+        await status_message.edit_text(f"Ручная новость обработана со статусом: {result}")
 
     @dp.message_handler(commands=["fetch_news_now"])
     async def fetch_news_now_handler(message: types.Message):
