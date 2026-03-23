@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Any
 
@@ -82,16 +83,19 @@ class NewsPipeline:
             url=article.get("url"),
         )
 
-    async def _generate_image(self, ai_result) -> tuple[str | None, str, str | None]:
+    async def _generate_image(self, ai_result) -> dict[str, Any]:
         if not ai_result or not ai_result.image_prompt_en:
-            return None, "skipped", "image_prompt_en is empty"
-        logger.info("[FAL] submit prompt=%s", ai_result.image_prompt_en[:200])
-        image_url = await self.fal_image_service.generate_news_image(ai_result.image_prompt_en)
-        if image_url:
-            return image_url, "success", None
-        return None, "failed", "fal returned empty image_url"
+            return {"request_id": None, "image_url": None, "fal_status": "skipped", "fal_error": "image_prompt_en is empty"}
+        result = await self.fal_image_service.generate_news_image(ai_result.image_prompt_en)
+        payload = asdict(result)
+        return {
+            "request_id": payload.get("request_id"),
+            "image_url": payload.get("image_url"),
+            "fal_status": payload.get("status"),
+            "fal_error": payload.get("error"),
+        }
 
-    async def _notify_admin_image_failure(self, article: dict[str, Any], ai_result, fal_error: str | None) -> None:
+    async def _notify_admin_image_failure(self, article: dict[str, Any], ai_result, fal_error: str | None, fal_status: str | None, fal_request_id: str | None) -> None:
         if not self.admin_id:
             return
         text = (
@@ -100,6 +104,8 @@ class NewsPipeline:
             f"Score: {ai_result.importance_score}\n"
             f"Level: {ai_result.importance_level}\n"
             f"Prompt exists: {'yes' if ai_result.image_prompt_en else 'no'}\n"
+            f"fal_request_id: {fal_request_id or 'none'}\n"
+            f"fal_status: {fal_status or 'unknown'}\n"
             f"fal_error: {fal_error or 'unknown'}"
         )
         try:
@@ -193,7 +199,11 @@ class NewsPipeline:
             return "skipped"
 
         messages, formatted_text = await self.formatter.format_post(prepared, ai_result)
-        image_url, fal_status, fal_error = await self._generate_image(ai_result)
+        fal_result = await self._generate_image(ai_result)
+        image_url = fal_result["image_url"]
+        fal_status = fal_result["fal_status"]
+        fal_error = fal_result["fal_error"]
+        fal_request_id = fal_result["request_id"]
         self.repository.update_sent_status(
             prepared["article_hash"],
             "image_ready" if image_url else "image_failed",
@@ -206,6 +216,7 @@ class NewsPipeline:
             betting_impact_kk=ai_result.betting_impact_kk,
             image_prompt_en=ai_result.image_prompt_en,
             generated_image_url=image_url,
+            fal_request_id=fal_request_id,
             fal_status=fal_status,
             fal_error=fal_error,
             send_reason=ai_result.send_reason,
@@ -214,7 +225,7 @@ class NewsPipeline:
 
         if not image_url:
             logger.error("[FAL] failed error=%s article_hash=%s", fal_error, prepared["article_hash"])
-            await self._notify_admin_image_failure(prepared, ai_result, fal_error)
+            await self._notify_admin_image_failure(prepared, ai_result, fal_error, fal_status, fal_request_id)
             return "image_failed"
 
         if not self._is_admin_review_mode() and not self.manual_review_required:
@@ -236,7 +247,7 @@ class NewsPipeline:
 
         if not self.admin_id:
             logger.error("[ADMIN PREVIEW] send failed error=ADMIN_ID is not configured")
-            self.repository.update_sent_status(prepared["article_hash"], "failed", fal_status=fal_status, fal_error="ADMIN_ID is not configured")
+            self.repository.update_sent_status(prepared["article_hash"], "failed", fal_request_id=fal_request_id, fal_status=fal_status, fal_error="ADMIN_ID is not configured")
             return "failed"
 
         reply_markup = admin_news_review_keyboard(prepared["article_hash"])
@@ -255,6 +266,7 @@ class NewsPipeline:
                 "failed",
                 translated_text=formatted_text,
                 sent_to_admin=False,
+                fal_request_id=fal_request_id,
                 fal_status=fal_status,
                 fal_error=publish_result.error,
             )
@@ -266,6 +278,7 @@ class NewsPipeline:
             translated_text=formatted_text,
             sent_to_admin=True,
             admin_message_id=getattr(publish_result, "message_id", None),
+            fal_request_id=fal_request_id,
             fal_status=fal_status,
             fal_error=None,
         )
@@ -334,7 +347,11 @@ class NewsPipeline:
         ai_result = await self._build_ai_result(article)
         if not ai_result:
             return "AI не вернул результат"
-        image_url, fal_status, fal_error = await self._generate_image(ai_result)
+        fal_result = await self._generate_image(ai_result)
+        image_url = fal_result["image_url"]
+        fal_status = fal_result["fal_status"]
+        fal_error = fal_result["fal_error"]
+        fal_request_id = fal_result["request_id"]
         if not image_url:
             return f"fal не вернул картинку: {fal_error or fal_status}"
         await self.telegram_publisher.publish_news_post(
@@ -382,13 +399,16 @@ class NewsPipeline:
             [
                 f"id={last.get('id')}",
                 f"article_hash={last.get('article_hash')}",
+                f"title={last.get('title')}",
                 f"status={last.get('status')}",
                 f"ai_score={last.get('importance_score')}",
                 f"ai_level={last.get('importance_level')}",
                 f"image_prompt_exists={'yes' if last.get('image_prompt_en') else 'no'}",
                 f"image_url_exists={'yes' if last.get('generated_image_url') else 'no'}",
                 f"sent_to_admin={bool(last.get('sent_to_admin'))}",
+                f"admin_message_id={last.get('admin_message_id') or 'none'}",
                 f"published_to_channel={bool(last.get('published_to_channel'))}",
+                f"fal_request_id={last.get('fal_request_id') or 'none'}",
                 f"fal_status={last.get('fal_status')}",
                 f"fal_error={last.get('fal_error') or 'none'}",
                 f"skip_reason={last.get('skip_reason') or 'none'}",

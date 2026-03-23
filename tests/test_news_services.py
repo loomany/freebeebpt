@@ -8,12 +8,49 @@ from unittest.mock import AsyncMock, patch
 from services.ai_news_processor import AINewsResult, ensure_ai_result_category, extract_team_or_player_names, infer_news_category
 from services.article_extractor import build_fallback_text, clean_article_text
 from services.dedup import build_article_hash
+from services.fal_image_service import FalGenerationResult, FalImageService
 from services.gnews_service import GNewsService
 from services.news_pipeline import NewsPipeline
 from services.news_ranker import NewsRanker
 from services.news_repository import NewsArticleRecord, NewsRepository
 from services.telegram_publisher import TelegramPublisher
 from services.telegram_formatter import format_ai_news_message
+
+
+class FalImageServiceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_generate_news_image_completes_and_fetches_result_after_completed_status(self):
+        with patch.dict(os.environ, {"FAL_KEY": "test-key", "FAL_TIMEOUT_SECONDS": "6", "FAL_POLL_INTERVAL_SECONDS": "0.01"}, clear=False):
+            service = FalImageService()
+            service.max_retries = 0
+            service.max_poll_attempts = 3
+            service._submit = AsyncMock(return_value=(object(), "req-123"))
+            service._poll_status = AsyncMock(side_effect=[{"status": "IN_PROGRESS"}, {"status": "COMPLETED"}])
+            service._get_result = AsyncMock(return_value={"images": [{"url": "https://img.test/generated.png"}]})
+
+            result = await service.generate_news_image("poster prompt")
+
+            self.assertEqual(result.status, "success")
+            self.assertEqual(result.request_id, "req-123")
+            self.assertEqual(result.image_url, "https://img.test/generated.png")
+            self.assertEqual(service._poll_status.await_count, 2)
+            service._get_result.assert_awaited_once()
+
+    async def test_generate_news_image_returns_timeout_after_max_poll_attempts(self):
+        with patch.dict(os.environ, {"FAL_KEY": "test-key", "FAL_TIMEOUT_SECONDS": "3", "FAL_POLL_INTERVAL_SECONDS": "0.01"}, clear=False):
+            service = FalImageService()
+            service.max_retries = 0
+            service.max_poll_attempts = 2
+            service._submit = AsyncMock(return_value=(object(), "req-timeout"))
+            service._poll_status = AsyncMock(return_value={"status": "IN_PROGRESS"})
+            service._get_result = AsyncMock()
+
+            result = await service.generate_news_image("poster prompt")
+
+            self.assertEqual(result.status, "timeout")
+            self.assertEqual(result.request_id, "req-timeout")
+            self.assertIn("timed out", result.error)
+            self.assertEqual(service._poll_status.await_count, 2)
+            service._get_result.assert_not_awaited()
 
 
 class NewsRepositoryTests(unittest.TestCase):
@@ -103,6 +140,40 @@ class NewsRepositoryTests(unittest.TestCase):
                     "Sky Sports",
                 )
             )
+
+    def test_debug_payload_includes_fal_request_id_and_admin_message(self):
+        with TemporaryDirectory() as tmp_dir:
+            repository = NewsRepository(Path(tmp_dir) / "test.sqlite3")
+            repository.save_sent_news(
+                NewsArticleRecord(
+                    topic="football",
+                    article_hash="fal-key",
+                    url="https://example.com/fal",
+                    title="Fal story",
+                    description=None,
+                    content=None,
+                    published_at=None,
+                    image=None,
+                    source_name="ESPN",
+                    source_url=None,
+                )
+            )
+            repository.update_sent_status(
+                "fal-key",
+                "review_pending",
+                fal_request_id="req-42",
+                fal_status="success",
+                generated_image_url="https://img.test/generated.png",
+                sent_to_admin=True,
+                admin_message_id=555,
+                importance_score=83,
+            )
+
+            debug = repository.get_last_article_debug()
+
+            self.assertEqual(debug["fal_request_id"], "req-42")
+            self.assertEqual(debug["admin_message_id"], 555)
+            self.assertEqual(debug["generated_image_url"], "https://img.test/generated.png")
 
     def test_sent_to_channel_persists_across_repository_restart(self):
         with TemporaryDirectory() as tmp_dir:
@@ -629,6 +700,69 @@ class NewsPipelineTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("skipped=1", summary)
             self.assertEqual(bot.send_message.await_count, 0)
             formatter.format_post.assert_not_called()
+
+    async def test_publish_article_marks_timeout_and_notifies_admin_when_fal_never_completes(self):
+        with TemporaryDirectory() as tmp_dir:
+            repository = NewsRepository(Path(tmp_dir) / "test.sqlite3")
+            repository.save_sent_news(
+                NewsArticleRecord(
+                    topic="football",
+                    article_hash="key-timeout",
+                    url="https://e/timeout",
+                    title="Timeout story",
+                    description=None,
+                    content=None,
+                    published_at=None,
+                    image=None,
+                    source_name="ESPN",
+                    source_url=None,
+                )
+            )
+            bot = AsyncMock()
+            formatter = AsyncMock()
+            formatter.format_post = AsyncMock(return_value=(["message"], "kk"))
+            ai_processor = AsyncMock()
+            ai_processor.process_news_with_ai = AsyncMock(
+                return_value=AINewsResult(
+                    is_important=True,
+                    importance_score=83,
+                    importance_level="high",
+                    category="football",
+                    rewritten_title_kk="T",
+                    summary_kk="S",
+                    image_prompt_en="vertical sports poster",
+                )
+            )
+            fal_image_service = AsyncMock()
+            fal_image_service.generate_news_image = AsyncMock(
+                return_value=FalGenerationResult(request_id="req-timeout", status="timeout", error="timed out after 120s")
+            )
+            pipeline = NewsPipeline(
+                bot=bot,
+                repository=repository,
+                gnews_service=AsyncMock(),
+                formatter=formatter,
+                ai_processor=ai_processor,
+                ranker=NewsRanker(min_score=75),
+                telegram_publisher=TelegramPublisher(bot),
+                fal_image_service=fal_image_service,
+                admin_id=1,
+                news_channel_id=None,
+                news_post_mode="admin",
+            )
+            pipeline.extract_enabled = False
+
+            status = await pipeline._publish_article(
+                {"article_hash": "key-timeout", "topic": "football", "title": "Timeout story", "source_name": "ESPN", "url": "https://e/timeout"}
+            )
+
+            self.assertEqual(status, "image_failed")
+            bot.send_message.assert_awaited_once()
+            bot.send_photo.assert_not_called()
+            debug = repository.get_last_article_debug()
+            self.assertEqual(debug["fal_request_id"], "req-timeout")
+            self.assertEqual(debug["fal_status"], "timeout")
+            self.assertEqual(debug["sent_to_admin"], 0)
 
     async def test_publish_article_uses_channel_chat_id_in_channel_mode(self):
         with TemporaryDirectory() as tmp_dir:

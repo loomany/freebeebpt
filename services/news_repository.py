@@ -60,6 +60,7 @@ class NewsArticleRecord:
     published_to_channel: bool = False
     channel_message_id: int | None = None
     skipped_by_admin: bool = False
+    fal_request_id: str | None = None
     fal_status: str | None = None
     fal_error: str | None = None
     send_reason: str | None = None
@@ -118,6 +119,7 @@ class NewsRepository:
                     published_to_channel INTEGER NOT NULL DEFAULT 0,
                     channel_message_id INTEGER,
                     skipped_by_admin INTEGER NOT NULL DEFAULT 0,
+                    fal_request_id TEXT,
                     fal_status TEXT,
                     fal_error TEXT,
                     send_reason TEXT,
@@ -163,6 +165,7 @@ class NewsRepository:
                 "published_to_channel": "ALTER TABLE news_sent ADD COLUMN published_to_channel INTEGER NOT NULL DEFAULT 0",
                 "channel_message_id": "ALTER TABLE news_sent ADD COLUMN channel_message_id INTEGER",
                 "skipped_by_admin": "ALTER TABLE news_sent ADD COLUMN skipped_by_admin INTEGER NOT NULL DEFAULT 0",
+                "fal_request_id": "ALTER TABLE news_sent ADD COLUMN fal_request_id TEXT",
                 "fal_status": "ALTER TABLE news_sent ADD COLUMN fal_status TEXT",
                 "fal_error": "ALTER TABLE news_sent ADD COLUMN fal_error TEXT",
                 "send_reason": "ALTER TABLE news_sent ADD COLUMN send_reason TEXT",
@@ -249,7 +252,7 @@ class NewsRepository:
                 """
                 SELECT article_hash, title, translated_text, generated_image_url, status,
                        sent_to_channel, published_to_channel, sent_to_admin, admin_message_id,
-                       channel_message_id, skipped_by_admin, fal_status, fal_error
+                       channel_message_id, skipped_by_admin, fal_request_id, fal_status, fal_error
                 FROM news_sent
                 WHERE article_hash = ?
                 LIMIT 1
@@ -267,7 +270,7 @@ class NewsRepository:
                 SELECT id, article_hash, topic, title, status, importance_score, importance_level,
                        image_prompt_en, generated_image_url, sent_to_admin, admin_message_id,
                        published_to_channel, channel_message_id, skipped_by_admin,
-                       fal_status, fal_error, send_reason, skip_reason, created_at, updated_at
+                       fal_request_id, fal_status, fal_error, send_reason, skip_reason, created_at, updated_at
                 FROM news_sent
                 ORDER BY id DESC
                 LIMIT 1
@@ -286,8 +289,8 @@ class NewsRepository:
                     importance_score, importance_level, rewritten_title_kk, summary_kk, key_points_json,
                     betting_impact_kk, team_impact_kk, image_prompt_en, generated_image_url, image_local_path,
                     sent_to_admin, admin_message_id, published_to_channel, channel_message_id, skipped_by_admin,
-                    fal_status, fal_error, send_reason, skip_reason, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    fal_request_id, fal_status, fal_error, send_reason, skip_reason, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(article_hash) DO UPDATE SET
                     sent_at = COALESCE(excluded.sent_at, news_sent.sent_at),
                     status = excluded.status,
@@ -315,6 +318,7 @@ class NewsRepository:
                     published_to_channel = CASE WHEN excluded.published_to_channel = 1 OR excluded.status = 'posted' THEN 1 ELSE news_sent.published_to_channel END,
                     channel_message_id = COALESCE(excluded.channel_message_id, news_sent.channel_message_id),
                     skipped_by_admin = CASE WHEN excluded.skipped_by_admin = 1 THEN 1 ELSE news_sent.skipped_by_admin END,
+                    fal_request_id = COALESCE(excluded.fal_request_id, news_sent.fal_request_id),
                     fal_status = COALESCE(excluded.fal_status, news_sent.fal_status),
                     fal_error = COALESCE(excluded.fal_error, news_sent.fal_error),
                     send_reason = COALESCE(excluded.send_reason, news_sent.send_reason),
@@ -329,7 +333,7 @@ class NewsRepository:
                     record.summary_kk, record.key_points_json, record.betting_impact_kk, record.team_impact_kk,
                     record.image_prompt_en, record.generated_image_url, record.image_local_path, int(record.sent_to_admin),
                     record.admin_message_id, int(record.published_to_channel), record.channel_message_id,
-                    int(record.skipped_by_admin), record.fal_status, record.fal_error, record.send_reason, record.skip_reason,
+                    int(record.skipped_by_admin), record.fal_request_id, record.fal_status, record.fal_error, record.send_reason, record.skip_reason,
                 ),
             )
 
@@ -355,6 +359,7 @@ class NewsRepository:
         published_to_channel: bool | None = None,
         channel_message_id: int | None = None,
         skipped_by_admin: bool | None = None,
+        fal_request_id: str | None = None,
         fal_status: str | None = None,
         fal_error: str | None = None,
         send_reason: str | None = None,
@@ -386,6 +391,7 @@ class NewsRepository:
                     published_to_channel = COALESCE(?, published_to_channel),
                     channel_message_id = COALESCE(?, channel_message_id),
                     skipped_by_admin = COALESCE(?, skipped_by_admin),
+                    fal_request_id = COALESCE(?, fal_request_id),
                     fal_status = COALESCE(?, fal_status),
                     fal_error = COALESCE(?, fal_error),
                     send_reason = COALESCE(?, send_reason),
@@ -399,7 +405,7 @@ class NewsRepository:
                     key_points_json, betting_impact_kk, team_impact_kk, image_prompt_en, generated_image_url,
                     image_local_path, int(sent_to_admin) if sent_to_admin is not None else None, admin_message_id,
                     int(published_to_channel) if published_to_channel is not None else None, channel_message_id,
-                    int(skipped_by_admin) if skipped_by_admin is not None else None, fal_status, fal_error,
+                    int(skipped_by_admin) if skipped_by_admin is not None else None, fal_request_id, fal_status, fal_error,
                     send_reason, skip_reason, article_hash,
                 ),
             )
