@@ -54,6 +54,25 @@ ENTITY_SEQUENCE_PATTERN = re.compile(
     r"\b(?:[A-Z][a-z]+(?:[-'][A-Z]?[a-z]+)?|[A-Z]{2,})(?:\s+(?:[A-Z][a-z]+(?:[-'][A-Z]?[a-z]+)?|[A-Z]{2,})){0,3}\b"
 )
 MATCHUP_PATTERN = re.compile(r"\b(?:vs\.?|versus|against)\b", re.IGNORECASE)
+QUALIFICATION_NEWS_PATTERN = re.compile(
+    r"\b("
+    r"qualif(?:y|ied|ies|ication)"
+    r"|clinch(?:ed|es)?"
+    r"|secured?"
+    r"|book(?:ed)?"
+    r"|advance(?:d|s)?"
+    r"|promotion"
+    r"|playoffs?"
+    r"|champions league"
+    r"|ucl"
+    r"|top\s*4"
+    r"|төрттік"
+    r"|чемпиондар\s+лигасы"
+    r"|жолдама"
+    r"|қамтамасыз"
+    r")\b",
+    re.IGNORECASE,
+)
 
 
 def _clean_prompt_fragment(value: str, *, limit: int = 220) -> str:
@@ -192,6 +211,36 @@ def ensure_ai_result_category(payload: dict[str, Any], *, topic: str, title: str
 
 def _needs_manual_kazakh_backfill(result: "AINewsResult", *, topic: str) -> bool:
     return topic == "manual" and (not result.rewritten_title_kk.strip() or not result.summary_kk.strip())
+
+
+def backfill_betting_impact(
+    result: "AINewsResult",
+    *,
+    topic: str,
+    title: str,
+    description: str,
+    article_text: str,
+) -> "AINewsResult":
+    if (result.betting_impact_kk or "").strip():
+        return result
+    if not result.is_important:
+        return result
+
+    category = infer_news_category(result.category, topic, title, description, article_text)
+    if category != "football":
+        return result
+
+    haystack = " ".join(
+        part.strip() for part in [title, description, article_text, result.rewritten_title_kk, result.summary_kk, *result.key_points_kk] if part
+    )
+    if not QUALIFICATION_NEWS_PATTERN.search(haystack):
+        return result
+
+    result.betting_impact_kk = (
+        "Бұл нәтиже келесі маусымға қатысты ұзақмерзімді нарықтарда команданың "
+        "еурокубоктік мәртебесін ертерек бекітіп, маусымдық күтулерге әсер етуі мүмкін."
+    )
+    return result
 
 
 if PYDANTIC_AVAILABLE:
@@ -390,6 +439,13 @@ class AINewsProcessor:
                 )
                 logger.info("[AI] important=%s score=%s level=%s", parsed.is_important, parsed.importance_score, parsed.importance_level)
                 logger.info("[AI] generated image prompt")
+                parsed = backfill_betting_impact(
+                    parsed,
+                    topic=topic,
+                    title=title,
+                    description=description,
+                    article_text=article_text,
+                )
                 logger.info("[AI] betting_impact=%s", "yes" if parsed.betting_impact_kk else "no")
                 parsed = await self._backfill_manual_kazakh_fields(
                     topic=topic,
