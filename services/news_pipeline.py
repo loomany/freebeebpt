@@ -10,7 +10,6 @@ from keyboards import admin_news_review_keyboard
 from services.article_extractor import build_fallback_text, extract_article_text
 from services.ai_news_processor import extract_team_or_player_names
 from services.gnews_service import TOPICS
-from services.news_repository import NewsRepository
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +21,7 @@ class NewsPipeline:
         self,
         *,
         bot,
-        repository: NewsRepository,
+        repository,
         gnews_service,
         formatter,
         ai_processor,
@@ -47,14 +46,10 @@ class NewsPipeline:
         self.extract_enabled = os.getenv("ARTICLE_EXTRACT_ENABLED", "true").lower() == "true"
         self.extract_timeout = int(os.getenv("ARTICLE_EXTRACT_TIMEOUT", "15"))
         self.article_min_text_length = int(os.getenv("ARTICLE_MIN_TEXT_LENGTH", "800"))
+        self.manual_review_required = os.getenv("NEWS_MANUAL_REVIEW_REQUIRED", "true").lower() == "true"
 
     def _is_admin_review_mode(self) -> bool:
         return self.news_post_mode == "admin"
-
-    def _target_chat_id(self) -> int | str | None:
-        if self.news_post_mode == "channel":
-            return self.news_channel_id
-        return self.admin_id
 
     async def _prepare_article(self, article: dict[str, Any]) -> dict[str, Any]:
         extraction = {"success": False, "text": None, "error": None, "method": "none"}
@@ -87,34 +82,71 @@ class NewsPipeline:
             url=article.get("url"),
         )
 
-    async def _generate_image(self, ai_result) -> str | None:
+    async def _generate_image(self, ai_result) -> tuple[str | None, str, str | None]:
         if not ai_result or not ai_result.image_prompt_en:
-            return None
-        return await self.fal_image_service.generate_news_image(ai_result.image_prompt_en)
+            return None, "skipped", "image_prompt_en is empty"
+        logger.info("[FAL] submit prompt=%s", ai_result.image_prompt_en[:200])
+        image_url = await self.fal_image_service.generate_news_image(ai_result.image_prompt_en)
+        if image_url:
+            return image_url, "success", None
+        return None, "failed", "fal returned empty image_url"
+
+    async def _notify_admin_image_failure(self, article: dict[str, Any], ai_result, fal_error: str | None) -> None:
+        if not self.admin_id:
+            return
+        text = (
+            "⚠️ Preview не собран: ошибка генерации изображения\n"
+            f"Title: {article.get('title')}\n"
+            f"Score: {ai_result.importance_score}\n"
+            f"Level: {ai_result.importance_level}\n"
+            f"Prompt exists: {'yes' if ai_result.image_prompt_en else 'no'}\n"
+            f"fal_error: {fal_error or 'unknown'}"
+        )
+        try:
+            await self.bot.send_message(chat_id=self.admin_id, text=text, disable_web_page_preview=True)
+        except Exception:
+            logger.exception("[ADMIN PREVIEW] debug notify failed article_hash=%s", article.get("article_hash"))
 
     async def send_article_to_channel(self, article_hash: str) -> str:
         article_state = self.repository.get_article_delivery_payload(article_hash)
         if not article_state:
             return "not_found"
-        if article_state["sent_to_channel"]:
+        if article_state["published_to_channel"] or article_state["sent_to_channel"]:
             return "already_sent"
         translated_text = (article_state.get("translated_text") or "").strip()
         if not translated_text:
             return "missing_text"
+        image_url = article_state.get("generated_image_url")
+        if not image_url:
+            return "missing_image"
+        logger.info("[PUBLISH] publish button clicked preview_id=%s", article_hash)
         publish_result = await self.telegram_publisher.publish_news_post(
             chat_id=self.news_channel_id,
             messages=[translated_text],
-            image_url=article_state.get("generated_image_url"),
+            image_url=image_url,
             article_title=article_state.get("title"),
         )
         if publish_result.status != "posted":
+            logger.error("[PUBLISH] channel send failed preview_id=%s error=%s", article_hash, publish_result.error)
             return publish_result.error or "failed"
         self.repository.update_sent_status(
             article_hash,
             "posted",
             sent_at=datetime.now(UTC).isoformat(),
+            published_to_channel=True,
+            channel_message_id=getattr(publish_result, "message_id", None),
         )
+        logger.info("[PUBLISH] channel send success preview_id=%s message_id=%s", article_hash, getattr(publish_result, "message_id", None))
         return "posted"
+
+    async def skip_article_by_admin(self, article_hash: str) -> str:
+        article_state = self.repository.get_article_delivery_payload(article_hash)
+        if not article_state:
+            return "not_found"
+        if article_state.get("published_to_channel") or article_state.get("sent_to_channel"):
+            return "already_sent"
+        self.repository.update_sent_status(article_hash, "skipped_by_admin", skipped_by_admin=True)
+        return "skipped"
 
     async def _publish_article(self, article: dict[str, Any]) -> str:
         article_state = self.repository.get_article_state(article["article_hash"])
@@ -128,90 +160,136 @@ class NewsPipeline:
             return "skipped"
 
         prepared = await self._prepare_article(article)
+        logger.info("[AI] processing title=%s", prepared.get("title"))
         ai_result = await self._build_ai_result(prepared)
         if not ai_result:
-            self.repository.update_sent_status(
-                prepared["article_hash"],
-                "skipped",
-            )
-            return "skipped"
+            self.repository.update_sent_status(prepared["article_hash"], "failed", skip_reason="ai_result_missing")
+            return "failed"
 
-        messages, formatted_text = await self.formatter.format_post(prepared, ai_result)
-        image_url = await self._generate_image(ai_result)
-        admin_review_mode = self._is_admin_review_mode()
-        should_send_to_target = admin_review_mode or self.ranker.should_send(ai_result)
-        if not should_send_to_target:
+        score_passed = self.ranker.should_send(ai_result)
+        logger.info(
+            "[AI] result important=%s score=%s level=%s threshold=%s passed=%s",
+            ai_result.is_important,
+            ai_result.importance_score,
+            ai_result.importance_level,
+            self.ranker.min_score,
+            score_passed,
+        )
+        if not score_passed:
             self.repository.update_sent_status(
                 prepared["article_hash"],
                 "skipped",
-                translated_text=formatted_text,
                 importance_score=ai_result.importance_score,
                 importance_level=ai_result.importance_level,
                 rewritten_title_kk=ai_result.rewritten_title_kk,
                 summary_kk=ai_result.summary_kk,
+                key_points_json=json.dumps(ai_result.key_points_kk, ensure_ascii=False),
                 betting_impact_kk=ai_result.betting_impact_kk,
                 image_prompt_en=ai_result.image_prompt_en,
-                generated_image_url=image_url,
                 send_reason=ai_result.send_reason,
-                skip_reason=ai_result.skip_reason,
+                skip_reason=ai_result.skip_reason or f"below_threshold:{self.ranker.min_score}",
             )
-            logger.info("[SEND] skipped title=%s", prepared.get("title"))
+            logger.info("[SEND] skipped title=%s reason=%s", prepared.get("title"), ai_result.skip_reason or "below threshold")
             return "skipped"
 
-        target_chat_id = self._target_chat_id()
-        reply_markup = None
-        if admin_review_mode:
-            reply_markup = admin_news_review_keyboard(prepared["article_hash"])
+        messages, formatted_text = await self.formatter.format_post(prepared, ai_result)
+        image_url, fal_status, fal_error = await self._generate_image(ai_result)
+        self.repository.update_sent_status(
+            prepared["article_hash"],
+            "image_ready" if image_url else "image_failed",
+            translated_text=formatted_text,
+            importance_score=ai_result.importance_score,
+            importance_level=ai_result.importance_level,
+            rewritten_title_kk=ai_result.rewritten_title_kk,
+            summary_kk=ai_result.summary_kk,
+            key_points_json=json.dumps(ai_result.key_points_kk, ensure_ascii=False),
+            betting_impact_kk=ai_result.betting_impact_kk,
+            image_prompt_en=ai_result.image_prompt_en,
+            generated_image_url=image_url,
+            fal_status=fal_status,
+            fal_error=fal_error,
+            send_reason=ai_result.send_reason,
+            skip_reason=ai_result.skip_reason,
+        )
+
+        if not image_url:
+            logger.error("[FAL] failed error=%s article_hash=%s", fal_error, prepared["article_hash"])
+            await self._notify_admin_image_failure(prepared, ai_result, fal_error)
+            return "image_failed"
+
+        if not self._is_admin_review_mode() and not self.manual_review_required:
+            publish_result = await self.telegram_publisher.publish_news_post(
+                chat_id=self.news_channel_id,
+                messages=messages,
+                image_url=image_url,
+                article_title=prepared.get("title"),
+            )
+            status = publish_result.status
+            self.repository.update_sent_status(
+                prepared["article_hash"],
+                status,
+                translated_text=formatted_text,
+                sent_at=datetime.now(UTC).isoformat() if status == "posted" else None,
+                published_to_channel=status == "posted",
+            )
+            return status
+
+        if not self.admin_id:
+            logger.error("[ADMIN PREVIEW] send failed error=ADMIN_ID is not configured")
+            self.repository.update_sent_status(prepared["article_hash"], "failed", fal_status=fal_status, fal_error="ADMIN_ID is not configured")
+            return "failed"
+
+        reply_markup = admin_news_review_keyboard(prepared["article_hash"])
+        logger.info("[ADMIN PREVIEW] send start admin_id=%s article_hash=%s", self.admin_id, prepared["article_hash"])
         publish_result = await self.telegram_publisher.publish_news_post(
-            chat_id=target_chat_id,
+            chat_id=self.admin_id,
             messages=messages,
             image_url=image_url,
             article_title=prepared.get("title"),
             reply_markup=reply_markup,
         )
-        status = publish_result.status
-        persisted_status = "review_pending" if admin_review_mode and status == "posted" else status
-        if publish_result.error:
-            logger.info("[SEND STATUS] title=%s chat_id=%s status=%s error=%s", prepared.get("title"), target_chat_id, status, publish_result.error)
-        sent_at = datetime.now(UTC).isoformat() if status == "posted" and not admin_review_mode else None
+        if publish_result.status != "posted":
+            logger.error("[ADMIN PREVIEW] send failed error=%s article_hash=%s", publish_result.error, prepared["article_hash"])
+            self.repository.update_sent_status(
+                prepared["article_hash"],
+                "failed",
+                translated_text=formatted_text,
+                sent_to_admin=False,
+                fal_status=fal_status,
+                fal_error=publish_result.error,
+            )
+            return "failed"
+        logger.info("[ADMIN PREVIEW] send success message_id=%s article_hash=%s", getattr(publish_result, "message_id", None), prepared["article_hash"])
         self.repository.update_sent_status(
             prepared["article_hash"],
-            persisted_status,
+            "review_pending",
             translated_text=formatted_text,
-            sent_at=sent_at,
-            importance_score=ai_result.importance_score,
-            importance_level=ai_result.importance_level,
-            rewritten_title_kk=ai_result.rewritten_title_kk,
-            summary_kk=ai_result.summary_kk,
-            betting_impact_kk=ai_result.betting_impact_kk,
-            image_prompt_en=ai_result.image_prompt_en,
-            generated_image_url=image_url,
-            send_reason=ai_result.send_reason,
-            skip_reason=ai_result.skip_reason,
+            sent_to_admin=True,
+            admin_message_id=getattr(publish_result, "message_id", None),
+            fal_status=fal_status,
+            fal_error=None,
         )
-        return persisted_status
+        return "review_pending"
 
     async def run_single_topic_cycle(self, topic: str, *, trigger: str) -> str:
         result = await self.gnews_service.fetch_topic_news(topic)
         published = 0
         queued = 0
         skipped = 0
-        max_posts = None if self._is_admin_review_mode() else MAX_POSTS_PER_TOPIC_PER_CYCLE
-        for index, article in enumerate(result.new_articles):
+        failed = 0
+        for article in result.new_articles:
             logger.info("[NEWS] fetched article topic=%s title=%s", topic, article.get("title"))
-            if max_posts is not None and index >= max_posts:
-                self.repository.update_sent_status(article["article_hash"], "queued")
-                queued += 1
-                continue
             status = await self._publish_article(article)
             if status in {"posted", "review_pending"}:
                 published += 1
             elif status == "skipped":
                 skipped += 1
+            else:
+                failed += 1
         self.repository.mark_last_fetch_time()
         return (
             f"topic={topic}; trigger={trigger}; fetched={result.fetched_articles}; "
-            f"new={len(result.new_articles)}; posted={published}; skipped={skipped}; queued={queued}; "
+            f"new={len(result.new_articles)}; posted={published}; skipped={skipped}; failed={failed}; queued={queued}; "
             f"today_requests={result.request_count_today}"
         )
 
@@ -238,77 +316,81 @@ class NewsPipeline:
         test_topic = topic or self.repository.get_next_topic(list(TOPICS))
         return await self.run_single_topic_cycle(test_topic, trigger="news_test")
 
-    async def run_news_test_ai(self, *, topic: str | None = None) -> str:
-        article = await self._get_latest_prepared_article(topic)
+    async def run_news_test_ai(self) -> str:
+        article = await self._get_latest_prepared_article()
         if not article:
-            return "Нет свежих новостей для AI-теста"
+            return "Нет новой статьи для AI теста"
         ai_result = await self._build_ai_result(article)
         if not ai_result:
-            return "AI не вернул валидный JSON"
-        messages, _ = await self.formatter.format_post(article, ai_result)
+            return "AI не вернул результат"
         payload = json.dumps(ai_result.model_dump(), ensure_ascii=False, indent=2)
         await self.bot.send_message(chat_id=self.admin_id, text=f"AI JSON:\n<pre>{payload[:3900]}</pre>", parse_mode="HTML")
-        for chunk in messages:
-            await self.bot.send_message(chat_id=self.admin_id, text=chunk, disable_web_page_preview=True)
         return f"AI test done: score={ai_result.importance_score}; level={ai_result.importance_level}; important={ai_result.is_important}"
 
-    async def run_news_test_image(self, *, topic: str | None = None) -> str:
-        article = await self._get_latest_prepared_article(topic)
+    async def run_news_test_image(self) -> str:
+        article = await self._get_latest_prepared_article()
         if not article:
-            return "Нет свежих новостей для image-теста"
+            return "Нет новой статьи для image теста"
         ai_result = await self._build_ai_result(article)
-        if not ai_result or not ai_result.image_prompt_en:
-            return "AI не вернул image prompt"
-        image_url = await self._generate_image(ai_result)
+        if not ai_result:
+            return "AI не вернул результат"
+        image_url, fal_status, fal_error = await self._generate_image(ai_result)
         if not image_url:
-            return "fal не вернул картинку"
+            return f"fal не вернул картинку: {fal_error or fal_status}"
         await self.telegram_publisher.publish_news_post(
             chat_id=self.admin_id,
             messages=[f"Image prompt:\n{ai_result.image_prompt_en}"],
             image_url=image_url,
             article_title=article.get("title"),
         )
-        return "Image test done"
+        return f"Image test done: image=yes status={fal_status}"
 
-    async def run_news_test_full(self, *, topic: str | None = None) -> str:
-        article = await self._get_latest_prepared_article(topic)
+    async def run_news_test_full(self) -> str:
+        article = await self._get_latest_prepared_article()
         if not article:
-            return "Нет свежих новостей для full-теста"
-        ai_result = await self._build_ai_result(article)
-        if not ai_result:
-            return "AI full test failed"
-        messages, _ = await self.formatter.format_post(article, ai_result)
-        image_url = await self._generate_image(ai_result)
-        publish_result = await self.telegram_publisher.publish_news_post(
-            chat_id=self.admin_id,
-            messages=messages,
-            image_url=image_url,
-            article_title=article.get("title"),
-        )
-        return f"Full test done: status={publish_result.status}; error={publish_result.error or 'none'}; score={ai_result.importance_score}; image={'yes' if image_url else 'no'}"
+            return "Нет новой статьи для полного теста"
+        status = await self._publish_article(article)
+        return f"Full test done: status={status}"
 
-    async def run_news_test_raw(self, *, topic: str | None = None) -> str:
-        article = await self._get_latest_prepared_article(topic)
+    async def run_news_test_raw(self) -> str:
+        article = await self._get_latest_prepared_article()
         if not article:
-            return "Нет свежих новостей для raw-теста"
+            return "Нет новой статьи"
         raw_preview = (article.get("final_text") or "")[:1500]
         return f"TITLE: {article.get('title')}\n\nRAW TEXT:\n{raw_preview}"
 
-    async def run_news_test_compare(self, *, topic: str | None = None) -> str:
-        article = await self._get_latest_prepared_article(topic)
+    async def run_news_test_compare(self) -> str:
+        article = await self._get_latest_prepared_article()
         if not article:
-            return "Нет свежих новостей для compare-теста"
+            return "Нет новой статьи"
         ai_result = await self._build_ai_result(article)
         if not ai_result:
-            return "AI compare failed: invalid response"
+            return "AI не вернул результат"
         raw_preview = (article.get("final_text") or "")[:700]
-        reason = ai_result.send_reason if self.ranker.should_send(ai_result) else ai_result.skip_reason
         return (
-            f"original title: {article.get('title')}\n\n"
             f"original text short: {raw_preview}\n\n"
-            f"AI summary: {ai_result.summary_kk}\n\n"
-            f"image prompt: {ai_result.image_prompt_en}\n\n"
             f"importance score: {ai_result.importance_score}\n"
             f"importance level: {ai_result.importance_level}\n"
-            f"why sent / skipped: {reason}"
+            f"image prompt exists: {'yes' if ai_result.image_prompt_en else 'no'}"
+        )
+
+    async def get_last_debug_status(self) -> str:
+        last = self.repository.get_last_article_debug()
+        if not last:
+            return "Нет сохранённых новостей"
+        return "\n".join(
+            [
+                f"id={last.get('id')}",
+                f"article_hash={last.get('article_hash')}",
+                f"status={last.get('status')}",
+                f"ai_score={last.get('importance_score')}",
+                f"ai_level={last.get('importance_level')}",
+                f"image_prompt_exists={'yes' if last.get('image_prompt_en') else 'no'}",
+                f"image_url_exists={'yes' if last.get('generated_image_url') else 'no'}",
+                f"sent_to_admin={bool(last.get('sent_to_admin'))}",
+                f"published_to_channel={bool(last.get('published_to_channel'))}",
+                f"fal_status={last.get('fal_status')}",
+                f"fal_error={last.get('fal_error') or 'none'}",
+                f"skip_reason={last.get('skip_reason') or 'none'}",
+            ]
         )

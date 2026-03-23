@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-ADMIN_ID_RAW = os.getenv("ADMIN_ID")
+ADMIN_ID_RAW = os.getenv("ADMIN_ID") or os.getenv("ADMIN_USER_ID")
 ADMIN_ID = int(ADMIN_ID_RAW) if ADMIN_ID_RAW else None
 NEWS_CHANNEL_ID = os.getenv("TELEGRAM_NEWS_CHAT_ID") or os.getenv("NEWS_CHANNEL_ID")
 logger.info("TELEGRAM_NEWS_CHAT_ID loaded as %r", NEWS_CHANNEL_ID)
@@ -62,7 +62,7 @@ client = AsyncOpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 repository = NewsRepository()
 gnews_service = GNewsService(repository=repository, api_key=GNEWS_API_KEY)
 ai_processor = AINewsProcessor(client=client)
-ranker = NewsRanker(min_score=int(os.getenv("NEWS_IMPORTANCE_MIN_SCORE", "75")))
+ranker = NewsRanker(min_score=int(os.getenv("NEWS_IMPORTANCE_MIN_SCORE", os.getenv("PRESCORE", "75"))))
 formatter = NewsFormatter()
 fal_image_service = FalImageService()
 telegram_publisher = TelegramPublisher(bot)
@@ -101,7 +101,7 @@ register_admin_news_handlers(
 async def start_handler(message: types.Message):
     await message.answer(
         "Привет! Это спортивный новостной бот.\n"
-        "Доступные админ-команды: /news_status, /fetch_news_now, /fetch_topic, /test_channel, /news_test, /news_test_ai, /news_test_image, /news_test_full, /news_test_raw, /news_test_compare"
+        "Доступные админ-команды: /news_status, /fetch_news_now, /fetch_topic, /test_channel, /news_test, /news_test_ai, /news_test_image, /news_test_full, /news_test_preview, /news_debug_last, /last_preview_status, /news_test_raw, /news_test_compare"
     )
 
 

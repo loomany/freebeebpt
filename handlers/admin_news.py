@@ -18,9 +18,9 @@ def register_admin_news_handlers(dp: Dispatcher, *, context: dict[str, Any]) -> 
     news_channel_id = context["news_channel_id"]
 
     async def _ensure_admin(message: types.Message) -> bool:
-        admin_id_raw = os.getenv("ADMIN_ID")
+        admin_id_raw = os.getenv("ADMIN_ID") or os.getenv("ADMIN_USER_ID")
         if not admin_id_raw:
-            await message.answer("ADMIN_ID не задан")
+            await message.answer("ADMIN_ID/ADMIN_USER_ID не задан")
             return False
         if str(message.from_user.id) != admin_id_raw:
             await message.answer("Команда доступна только администратору")
@@ -121,7 +121,7 @@ def register_admin_news_handlers(dp: Dispatcher, *, context: dict[str, Any]) -> 
         summary = await news_pipeline.run_news_test_image()
         await message.answer(summary)
 
-    @dp.message_handler(commands=["news_test_full"])
+    @dp.message_handler(commands=["news_test_full", "news_test_preview"])
     async def news_test_full_handler(message: types.Message):
         if not await _ensure_admin(message):
             return
@@ -143,9 +143,16 @@ def register_admin_news_handlers(dp: Dispatcher, *, context: dict[str, Any]) -> 
         summary = await news_pipeline.run_news_test_compare()
         await message.answer(summary)
 
+    @dp.message_handler(commands=["news_debug_last", "last_preview_status"])
+    async def news_debug_last_handler(message: types.Message):
+        if not await _ensure_admin(message):
+            return
+        summary = await news_pipeline.get_last_debug_status()
+        await message.answer(summary)
+
     @dp.callback_query_handler(lambda call: (call.data or "").startswith("send_news:"))
     async def send_news_to_channel_handler(callback_query: types.CallbackQuery):
-        admin_id_raw = os.getenv("ADMIN_ID")
+        admin_id_raw = os.getenv("ADMIN_ID") or os.getenv("ADMIN_USER_ID")
         if not admin_id_raw or str(callback_query.from_user.id) != admin_id_raw:
             await callback_query.answer("Только администратор может отправлять новости", show_alert=True)
             return
@@ -157,7 +164,7 @@ def register_admin_news_handlers(dp: Dispatcher, *, context: dict[str, Any]) -> 
         article_hash = callback_query.data.split(":", 1)[1]
         send_result = await news_pipeline.send_article_to_channel(article_hash)
         if send_result == "posted":
-            await callback_query.answer("Новость отправлена в канал")
+            await callback_query.answer("Опубликовано")
             if callback_query.message:
                 try:
                     await callback_query.message.edit_reply_markup()
@@ -177,5 +184,24 @@ def register_admin_news_handlers(dp: Dispatcher, *, context: dict[str, Any]) -> 
         error_messages = {
             "not_found": "Не нашёл сохранённую новость",
             "missing_text": "Нет сохранённого текста для публикации",
+            "missing_image": "Нет сохранённой картинки для публикации",
         }
         await callback_query.answer(error_messages.get(send_result, f"Ошибка отправки: {send_result}"), show_alert=True)
+
+    @dp.callback_query_handler(lambda call: (call.data or "").startswith("skip_news:"))
+    async def skip_news_handler(callback_query: types.CallbackQuery):
+        admin_id_raw = os.getenv("ADMIN_ID") or os.getenv("ADMIN_USER_ID")
+        if not admin_id_raw or str(callback_query.from_user.id) != admin_id_raw:
+            await callback_query.answer("Только администратор может пропускать новости", show_alert=True)
+            return
+        article_hash = callback_query.data.split(":", 1)[1]
+        result = await news_pipeline.skip_article_by_admin(article_hash)
+        if result == "skipped":
+            await callback_query.answer("Пропущено")
+            if callback_query.message:
+                try:
+                    await callback_query.message.edit_reply_markup()
+                except MessageNotModified:
+                    pass
+            return
+        await callback_query.answer("Не удалось пропустить новость", show_alert=True)

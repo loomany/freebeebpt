@@ -20,6 +20,7 @@ class PublishResult:
     used_image: bool = False
     text_length: int = 0
     send_method: str | None = None
+    message_id: int | None = None
 
 
 class TelegramPublisher:
@@ -152,6 +153,7 @@ class TelegramPublisher:
                 used_image=bool(image_url),
                 text_length=text_length,
                 send_method="send_photo" if image_url and sent_any and not overflow_messages else "send_message",
+                message_id=getattr(response, "message_id", None),
             )
         except Exception as error:  # noqa: BLE001
             error_text = self._format_error(error)
