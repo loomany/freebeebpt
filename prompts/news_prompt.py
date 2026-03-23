@@ -39,6 +39,7 @@ NEWS_SYSTEM_PROMPT = """Ты — редактор спортивных ново�
 
 Правила:
 - importance_score ставь от 0 до 100.
+- Поле category заполняй обязательно одним из: football, basketball, hockey, tennis.
 - Пропускай в отправку только high/top и score >= 75.
 - Если новость неважная, верни is_important=false и заполни skip_reason.
 - rewritten_title_kk, summary_kk, key_points_kk, betting_impact_kk, team_impact_kk пиши на казахском.
