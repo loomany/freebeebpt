@@ -71,6 +71,9 @@ class FalImageService:
     def _extract_image_url(self, payload: dict[str, Any] | None) -> str | None:
         if not isinstance(payload, dict):
             return None
+        result_data = payload.get("data")
+        if isinstance(result_data, dict):
+            payload = result_data
         images = payload.get("images") or []
         if not images or not isinstance(images, list):
             return None
@@ -139,6 +142,7 @@ class FalImageService:
             response = await client.get(
                 f"{self.queue_base_url}/{self.model}/requests/{request_id}/status",
                 headers=self._headers(),
+                params={"logs": "true"},
             )
             if response.status_code not in {200, 202}:
                 response.raise_for_status()
@@ -159,7 +163,7 @@ class FalImageService:
             raise RuntimeError("httpx is not installed")
         async with httpx.AsyncClient(timeout=self.http_timeout_seconds) as client:
             response = await client.get(
-                f"{self.queue_base_url}/{self.model}/requests/{request_id}",
+                f"{self.queue_base_url}/{self.model}/requests/{request_id}/result",
                 headers=self._headers(),
             )
             response.raise_for_status()
@@ -187,7 +191,11 @@ class FalImageService:
                 handle_or_payload, request_id = await self._submit(prompt)
                 logger.info("[FAL] submit ok request_id=%s model=%s", request_id, self.model)
 
+                terminal_state: str | None = None
                 for attempt in range(1, self.max_poll_attempts + 1):
+                    if terminal_state == "COMPLETED":
+                        logger.warning("[FAL] completed repeated after terminal state request_id=%s", request_id)
+                        break
                     status_payload = await asyncio.wait_for(
                         self._poll_status(handle_or_payload, request_id),
                         timeout=self.http_timeout_seconds,
@@ -209,11 +217,21 @@ class FalImageService:
                         len(logs or []),
                     )
                     if status == "COMPLETED":
+                        terminal_state = status
                         logger.info("[FAL] completed request_id=%s", request_id)
-                        result_payload = await asyncio.wait_for(
-                            self._get_result(handle_or_payload, request_id),
-                            timeout=self.http_timeout_seconds,
-                        )
+                        try:
+                            result_payload = await asyncio.wait_for(
+                                self._get_result(handle_or_payload, request_id),
+                                timeout=self.http_timeout_seconds,
+                            )
+                        except Exception as result_error:  # noqa: BLE001
+                            logger.error("[FAL] result fetch failed request_id=%s error=%s", request_id, result_error)
+                            return FalGenerationResult(
+                                request_id=request_id,
+                                status="failed",
+                                error=str(result_error),
+                                attempts=attempt,
+                            )
                         logger.info("[FAL] result payload = %s", result_payload)
                         image_url = self._extract_image_url(result_payload)
                         logger.info("[FAL] image_url parsed=%s request_id=%s", image_url, request_id)
@@ -225,8 +243,8 @@ class FalImageService:
                                 attempts=attempt,
                                 payload=result_payload,
                             )
-                        error_message = "response does not contain images[0].url"
-                        logger.error("[FAL] completed but empty result request_id=%s error=%s", request_id, error_message)
+                        error_message = "response does not contain data.images[0].url"
+                        logger.error("[FAL] completed but empty result request_id=%s error=%s payload=%s", request_id, error_message, result_payload)
                         return FalGenerationResult(
                             request_id=request_id,
                             status="failed",
