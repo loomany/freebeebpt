@@ -18,6 +18,11 @@ from services.telegram_formatter import format_ai_news_message
 
 
 class FalImageServiceTests(unittest.IsolatedAsyncioTestCase):
+    def test_normalize_status_reads_status_from_dict_payload(self):
+        service = FalImageService()
+
+        self.assertEqual(service._normalize_status({"status": "COMPLETED"}), "COMPLETED")
+
     async def test_generate_news_image_completes_and_fetches_result_after_completed_status(self):
         with patch.dict(os.environ, {"FAL_KEY": "test-key", "FAL_TIMEOUT_SECONDS": "6", "FAL_POLL_INTERVAL_SECONDS": "0.01"}, clear=False):
             service = FalImageService()
@@ -33,6 +38,23 @@ class FalImageServiceTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result.request_id, "req-123")
             self.assertEqual(result.image_url, "https://img.test/generated.png")
             self.assertEqual(service._poll_status.await_count, 2)
+            service._get_result.assert_awaited_once()
+
+    async def test_generate_news_image_fails_when_completed_result_has_no_image_url(self):
+        with patch.dict(os.environ, {"FAL_KEY": "test-key", "FAL_TIMEOUT_SECONDS": "6", "FAL_POLL_INTERVAL_SECONDS": "0.01"}, clear=False):
+            service = FalImageService()
+            service.max_retries = 0
+            service.max_poll_attempts = 3
+            service._submit = AsyncMock(return_value=(object(), "req-empty"))
+            service._poll_status = AsyncMock(return_value={"status": "COMPLETED"})
+            service._get_result = AsyncMock(return_value={"images": [{}]})
+
+            result = await service.generate_news_image("poster prompt")
+
+            self.assertEqual(result.status, "failed")
+            self.assertEqual(result.request_id, "req-empty")
+            self.assertEqual(result.error, "response does not contain images[0].url")
+            self.assertEqual(service._poll_status.await_count, 1)
             service._get_result.assert_awaited_once()
 
     async def test_generate_news_image_returns_timeout_after_max_poll_attempts(self):
