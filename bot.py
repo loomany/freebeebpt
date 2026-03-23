@@ -29,6 +29,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ADMIN_ID_RAW = os.getenv("ADMIN_ID")
 ADMIN_ID = int(ADMIN_ID_RAW) if ADMIN_ID_RAW else None
 NEWS_CHANNEL_ID = os.getenv("TELEGRAM_NEWS_CHAT_ID") or os.getenv("NEWS_CHANNEL_ID")
+logger.info("TELEGRAM_NEWS_CHAT_ID loaded as %r", NEWS_CHANNEL_ID)
 NEWS_POST_MODE = os.getenv("NEWS_POST_MODE", "admin")
 GNEWS_API_KEY = os.getenv("GNEWS_API_KEY")
 
@@ -70,6 +71,7 @@ register_admin_news_handlers(
         "news_pipeline": news_pipeline,
         "news_post_mode": NEWS_POST_MODE,
         "telegram_publisher": telegram_publisher,
+        "news_channel_id": NEWS_CHANNEL_ID,
         "fal_image_service": fal_image_service,
     },
 )
@@ -79,11 +81,16 @@ register_admin_news_handlers(
 async def start_handler(message: types.Message):
     await message.answer(
         "Привет! Это спортивный новостной бот.\n"
-        "Доступные админ-команды: /news_status, /fetch_news_now, /fetch_topic, /news_test, /news_test_ai, /news_test_image, /news_test_full, /news_test_raw, /news_test_compare"
+        "Доступные админ-команды: /news_status, /fetch_news_now, /fetch_topic, /test_channel, /news_test, /news_test_ai, /news_test_image, /news_test_full, /news_test_raw, /news_test_compare"
     )
 
 
 async def on_startup(_: Dispatcher) -> None:
+    if NEWS_CHANNEL_ID:
+        access_ok, access_message = await telegram_publisher.verify_channel_access(NEWS_CHANNEL_ID)
+        logger.info("[STARTUP CHANNEL CHECK] ok=%s chat_id=%s message=%s", access_ok, NEWS_CHANNEL_ID, access_message)
+    else:
+        logger.warning("[STARTUP CHANNEL CHECK] TELEGRAM_NEWS_CHAT_ID is empty")
     if os.getenv("NEWS_ENABLED", "true").lower() == "true":
         asyncio.create_task(run_hourly_news_scheduler(news_pipeline))
 
