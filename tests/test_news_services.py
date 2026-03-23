@@ -348,6 +348,19 @@ class FormatterAndRankerTests(unittest.TestCase):
         )
         self.assertFalse(ranker.should_send(result))
 
+    def test_ranker_allows_admin_preview_by_score_only(self):
+        ranker = NewsRanker(min_score=75, admin_preview_min_score=10)
+        result = AINewsResult(
+            is_important=False,
+            importance_score=28,
+            importance_level="low",
+            category="football",
+            image_prompt_en="vertical sports poster",
+            skip_reason="low practical value",
+        )
+        self.assertTrue(ranker.passed_for_admin_preview(result))
+        self.assertFalse(ranker.passed_for_auto_publish(result))
+
     def test_format_ai_news_message_uses_ai_category_for_emoji(self):
         result = AINewsResult(
             is_important=True,
@@ -824,6 +837,73 @@ class NewsPipelineTests(unittest.IsolatedAsyncioTestCase):
                 photo="https://img.test/generated.png",
                 caption="message",
             )
+
+    async def test_admin_preview_ignores_is_important_when_score_meets_preview_threshold(self):
+        with TemporaryDirectory() as tmp_dir:
+            repository = NewsRepository(Path(tmp_dir) / "test.sqlite3")
+            repository.save_sent_news(
+                NewsArticleRecord(
+                    topic="football",
+                    article_hash="key-admin-preview",
+                    url="https://e/admin-preview",
+                    title="Admin preview story",
+                    description=None,
+                    content=None,
+                    published_at=None,
+                    image=None,
+                    source_name="ESPN",
+                    source_url=None,
+                )
+            )
+            bot = AsyncMock()
+            formatter = AsyncMock()
+            formatter.format_post = AsyncMock(return_value=(["message"], "kk"))
+            ai_processor = AsyncMock()
+            ai_processor.process_news_with_ai = AsyncMock(
+                return_value=AINewsResult(
+                    is_important=False,
+                    importance_score=28,
+                    importance_level="low",
+                    category="football",
+                    rewritten_title_kk="T",
+                    summary_kk="S",
+                    image_prompt_en="vertical sports poster",
+                    skip_reason="low practical value",
+                )
+            )
+            fal_image_service = AsyncMock()
+            fal_image_service.generate_news_image = AsyncMock(
+                return_value=FalGenerationResult(request_id="req-preview", status="completed", image_url="https://img/preview.png")
+            )
+            pipeline = NewsPipeline(
+                bot=bot,
+                repository=repository,
+                gnews_service=AsyncMock(),
+                formatter=formatter,
+                ai_processor=ai_processor,
+                ranker=NewsRanker(min_score=75, admin_preview_min_score=10),
+                telegram_publisher=TelegramPublisher(bot),
+                fal_image_service=fal_image_service,
+                admin_id=1,
+                news_channel_id=None,
+                news_post_mode="admin",
+            )
+            pipeline.extract_enabled = False
+
+            status = await pipeline._publish_article(
+                {"article_hash": "key-admin-preview", "topic": "football", "title": "Admin preview story", "source_name": "ESPN", "url": "https://e/admin-preview"}
+            )
+
+            self.assertEqual(status, "review_pending")
+            formatter.format_post.assert_awaited_once()
+            fal_image_service.generate_news_image.assert_awaited_once_with("vertical sports poster")
+            bot.send_photo.assert_awaited_once()
+            state = repository.get_article_delivery_payload("key-admin-preview")
+            self.assertEqual(state["status"], "review_pending")
+            self.assertEqual(state["importance_score"], 28)
+            self.assertEqual(state["skip_reason"], "low practical value")
+            self.assertTrue(state["sent_to_admin"])
+            self.assertFalse(state["published_to_channel"])
 
 
 if __name__ == "__main__":

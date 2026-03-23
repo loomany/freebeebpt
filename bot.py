@@ -62,7 +62,10 @@ client = AsyncOpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 repository = NewsRepository()
 gnews_service = GNewsService(repository=repository, api_key=GNEWS_API_KEY)
 ai_processor = AINewsProcessor(client=client)
-ranker = NewsRanker(min_score=int(os.getenv("NEWS_IMPORTANCE_MIN_SCORE", os.getenv("PRESCORE", "75"))))
+ranker = NewsRanker(
+    min_score=int(os.getenv("NEWS_IMPORTANCE_MIN_SCORE", os.getenv("PRESCORE", "75"))),
+    admin_preview_min_score=int(os.getenv("ADMIN_PREVIEW_MIN_SCORE", os.getenv("NEWS_IMPORTANCE_MIN_SCORE", os.getenv("PRESCORE", "75")))),
+)
 formatter = NewsFormatter()
 fal_image_service = FalImageService()
 telegram_publisher = TelegramPublisher(bot)
