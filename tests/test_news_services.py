@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -8,7 +9,8 @@ from services.article_extractor import build_fallback_text, clean_article_text
 from services.gnews_service import GNewsService
 from services.news_pipeline import NewsPipeline
 from services.news_ranker import NewsRanker
-from services.news_repository import NewsRepository
+from services.news_repository import NewsArticleRecord, NewsRepository
+from services.telegram_publisher import TelegramPublisher
 from services.telegram_formatter import format_ai_news_message
 
 
@@ -41,7 +43,7 @@ class GNewsServiceTests(unittest.IsolatedAsyncioTestCase):
     async def test_fetch_topic_news_stops_at_limit(self):
         with TemporaryDirectory() as tmp_dir:
             repository = NewsRepository(Path(tmp_dir) / "test.sqlite3")
-            repository.increment_daily_requests("2026-03-22", 96)
+            repository.increment_daily_requests(datetime.now(UTC).date().isoformat(), 96)
             service = GNewsService(repository=repository, api_key="test")
 
             result = await service.fetch_topic_news("football")
@@ -94,6 +96,7 @@ class FormatterAndRankerTests(unittest.TestCase):
             rewritten_title_kk="Маңызды жаңалық",
             summary_kk="Қысқаша мазмұн",
             key_points_kk=["Бір", "Екі"],
+            image_prompt_en="vertical sports poster",
             send_reason="strong impact",
         )
 
@@ -110,6 +113,7 @@ class FormatterAndRankerTests(unittest.TestCase):
             importance_score=74,
             importance_level="high",
             category="football",
+            image_prompt_en="vertical sports poster",
         )
         self.assertFalse(ranker.should_send(result))
 
@@ -122,6 +126,8 @@ class NewsPipelineTests(unittest.IsolatedAsyncioTestCase):
             formatter = AsyncMock()
             formatter.format_post = AsyncMock(return_value=(["message"], "kk"))
             ai_processor = AsyncMock()
+            fal_image_service = AsyncMock()
+            fal_image_service.generate_news_image = AsyncMock(return_value="https://img.test/generated.png")
             ai_processor.process_news_with_ai = AsyncMock(
                 return_value=AINewsResult(
                     is_important=True,
@@ -130,6 +136,7 @@ class NewsPipelineTests(unittest.IsolatedAsyncioTestCase):
                     category="football",
                     rewritten_title_kk="T",
                     summary_kk="S",
+                    image_prompt_en="vertical sports poster",
                 )
             )
             gnews_service = AsyncMock()
@@ -150,13 +157,18 @@ class NewsPipelineTests(unittest.IsolatedAsyncioTestCase):
             )
             for i in range(4):
                 repository.save_sent_news(
-                    type("Record", (), {
-                        "topic": "football", "article_hash": f"key-{i}", "url": f"https://e/{i}", "title": f"T{i}", "description": None,
-                        "content": None, "published_at": None, "image": None, "source_name": "ESPN",
-                        "source_url": None, "status": "new", "translated_text": None, "raw_payload": None,
-                        "importance_score": None, "importance_level": None, "rewritten_title_kk": None,
-                        "summary_kk": None, "betting_impact_kk": None, "team_impact_kk": None,
-                    })()
+                    NewsArticleRecord(
+                        topic="football",
+                        article_hash=f"key-{i}",
+                        url=f"https://e/{i}",
+                        title=f"T{i}",
+                        description=None,
+                        content=None,
+                        published_at=None,
+                        image=None,
+                        source_name="ESPN",
+                        source_url=None,
+                    )
                 )
             pipeline = NewsPipeline(
                 bot=bot,
@@ -165,18 +177,19 @@ class NewsPipelineTests(unittest.IsolatedAsyncioTestCase):
                 formatter=formatter,
                 ai_processor=ai_processor,
                 ranker=NewsRanker(min_score=75),
+                telegram_publisher=TelegramPublisher(bot),
+                fal_image_service=fal_image_service,
                 admin_id=1,
                 news_channel_id=None,
                 news_post_mode="admin",
             )
             pipeline.extract_enabled = False
-            pipeline.send_photo_enabled = False
 
             summary = await pipeline.run_single_topic_cycle("football", trigger="test")
 
             self.assertIn("posted=3", summary)
             self.assertIn("queued=1", summary)
-            self.assertEqual(bot.send_message.await_count, 3)
+            self.assertEqual(bot.send_photo.await_count, 3)
 
     async def test_run_single_topic_skips_low_value_news(self):
         with TemporaryDirectory() as tmp_dir:
@@ -184,6 +197,7 @@ class NewsPipelineTests(unittest.IsolatedAsyncioTestCase):
             bot = AsyncMock()
             formatter = AsyncMock()
             ai_processor = AsyncMock()
+            fal_image_service = AsyncMock()
             ai_processor.process_news_with_ai = AsyncMock(
                 return_value=AINewsResult(
                     is_important=False,
@@ -207,13 +221,18 @@ class NewsPipelineTests(unittest.IsolatedAsyncioTestCase):
                 )()
             )
             repository.save_sent_news(
-                type("Record", (), {
-                    "topic": "football", "article_hash": "key-1", "url": "https://e/1", "title": "T1", "description": None,
-                    "content": None, "published_at": None, "image": None, "source_name": "ESPN",
-                    "source_url": None, "status": "new", "translated_text": None, "raw_payload": None,
-                    "importance_score": None, "importance_level": None, "rewritten_title_kk": None,
-                    "summary_kk": None, "betting_impact_kk": None, "team_impact_kk": None,
-                })()
+                NewsArticleRecord(
+                    topic="football",
+                    article_hash="key-1",
+                    url="https://e/1",
+                    title="T1",
+                    description=None,
+                    content=None,
+                    published_at=None,
+                    image=None,
+                    source_name="ESPN",
+                    source_url=None,
+                )
             )
             pipeline = NewsPipeline(
                 bot=bot,
@@ -222,12 +241,13 @@ class NewsPipelineTests(unittest.IsolatedAsyncioTestCase):
                 formatter=formatter,
                 ai_processor=ai_processor,
                 ranker=NewsRanker(min_score=75),
+                telegram_publisher=TelegramPublisher(bot),
+                fal_image_service=fal_image_service,
                 admin_id=1,
                 news_channel_id=None,
                 news_post_mode="admin",
             )
             pipeline.extract_enabled = False
-            pipeline.send_photo_enabled = False
 
             summary = await pipeline.run_single_topic_cycle("football", trigger="test")
 

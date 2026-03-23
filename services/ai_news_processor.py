@@ -35,6 +35,7 @@ if PYDANTIC_AVAILABLE:
         key_points_kk: list[str] = Field(default_factory=list)
         betting_impact_kk: str = ""
         team_impact_kk: str = ""
+        image_prompt_en: str = ""
         send_reason: str = ""
         skip_reason: str = ""
 
@@ -53,6 +54,14 @@ if PYDANTIC_AVAILABLE:
                 raise ValueError("key_points_kk can contain at most 3 items")
             return [item.strip() for item in value if item and item.strip()]
 
+        @field_validator("image_prompt_en")
+        @classmethod
+        def validate_image_prompt(cls, value: str, info) -> str:
+            cleaned = (value or "").strip()
+            if info.data.get("is_important") and not cleaned:
+                raise ValueError("image_prompt_en is required when is_important is true")
+            return cleaned
+
 else:
 
     @dataclass(slots=True)
@@ -66,6 +75,7 @@ else:
         key_points_kk: list[str] = field(default_factory=list)
         betting_impact_kk: str = ""
         team_impact_kk: str = ""
+        image_prompt_en: str = ""
         send_reason: str = ""
         skip_reason: str = ""
 
@@ -86,6 +96,9 @@ else:
             if len(self.key_points_kk) > 3:
                 raise ValueError("key_points_kk can contain at most 3 items")
             self.key_points_kk = [item.strip() for item in self.key_points_kk if item and item.strip()]
+            self.image_prompt_en = (self.image_prompt_en or "").strip()
+            if self.is_important and not self.image_prompt_en:
+                raise ValueError("image_prompt_en is required when is_important is true")
 
 
 class AINewsProcessor:
@@ -136,6 +149,7 @@ class AINewsProcessor:
                 )
                 parsed = AINewsResult.model_validate(json.loads(response.output_text))
                 logger.info("[AI] important=%s score=%s level=%s", parsed.is_important, parsed.importance_score, parsed.importance_level)
+                logger.info("[AI] generated image prompt")
                 logger.info("[AI] betting_impact=%s", "yes" if parsed.betting_impact_kk else "no")
                 logger.info("[AI] translation=kk success")
                 if not parsed.is_important:

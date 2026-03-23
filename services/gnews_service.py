@@ -49,7 +49,6 @@ class GNewsService:
             "content": (article.get("content") or "").strip() or None,
             "source_name": (source.get("name") or "").strip() or None,
             "source_url": (source.get("url") or "").strip() or None,
-            "image": (article.get("image") or "").strip() or None,
             "url": (article.get("url") or "").strip() or None,
             "published_at": article.get("publishedAt"),
         }
@@ -73,7 +72,7 @@ class GNewsService:
                     description=article.get("description"),
                     content=article.get("content"),
                     published_at=article.get("published_at"),
-                    image=article.get("image"),
+                    image=None,
                     source_name=article.get("source_name"),
                     source_url=article.get("source_url"),
                     status="new",
