@@ -78,7 +78,7 @@ class FalImageServiceTests(unittest.IsolatedAsyncioTestCase):
             service.max_poll_attempts = 2
             service._submit = AsyncMock(return_value=(object(), "req-timeout"))
             service._poll_status = AsyncMock(return_value={"status": "IN_PROGRESS"})
-            service._get_result = AsyncMock()
+            service._get_result = AsyncMock(side_effect=RuntimeError("not ready"))
 
             result = await service.generate_news_image("poster prompt")
 
@@ -86,7 +86,24 @@ class FalImageServiceTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result.request_id, "req-timeout")
             self.assertIn("timed out", result.error)
             self.assertEqual(service._poll_status.await_count, 2)
-            service._get_result.assert_not_awaited()
+            service._get_result.assert_awaited_once()
+
+    async def test_generate_news_image_recovers_completed_result_after_poll_timeout(self):
+        with patch.dict(os.environ, {"FAL_KEY": "test-key", "FAL_TIMEOUT_SECONDS": "3", "FAL_POLL_INTERVAL_SECONDS": "0.01"}, clear=False):
+            service = FalImageService()
+            service.max_retries = 0
+            service.max_poll_attempts = 2
+            service._submit = AsyncMock(return_value=(object(), "req-late-result"))
+            service._poll_status = AsyncMock(return_value={"status": "IN_PROGRESS"})
+            service._get_result = AsyncMock(return_value={"images": [{"url": "https://img.test/late.png"}]})
+
+            result = await service.generate_news_image("poster prompt")
+
+            self.assertEqual(result.status, "success")
+            self.assertEqual(result.request_id, "req-late-result")
+            self.assertEqual(result.image_url, "https://img.test/late.png")
+            self.assertEqual(service._poll_status.await_count, 2)
+            service._get_result.assert_awaited_once()
 
 
 class NewsRepositoryTests(unittest.TestCase):
