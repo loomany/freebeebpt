@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 from services.ai_news_processor import (
     AINewsProcessor,
     AINewsResult,
+    backfill_betting_impact,
     build_image_prompt_fallback,
     ensure_ai_result_category,
     extract_team_or_player_names,
@@ -415,6 +416,48 @@ class FormatterAndRankerTests(unittest.TestCase):
         self.assertIn("📊 Беттингке әсері:", message)
         self.assertNotIn("📊 Ставкаға әсері:", message)
         self.assertNotIn("👥 Командаға әсері:", message)
+
+    def test_backfill_betting_impact_for_football_qualification_news(self):
+        result = AINewsResult(
+            is_important=True,
+            importance_score=92,
+            importance_level="top",
+            category="football",
+            rewritten_title_kk="Барселона Чемпиондар лигасына жолдаманы рәсімдеді",
+            summary_kk="Клуб келесі маусымдағы негізгі кезеңге мерзімінен бұрын шықты.",
+            key_points_kk=["Команда топ-4-тен төмен түспейді."],
+            image_prompt_en="vertical sports poster",
+        )
+
+        updated = backfill_betting_impact(
+            result,
+            topic="football",
+            title="Barcelona become first team to clinch Champions League spot for 2026/27",
+            description="La Liga leaders secured qualification with nine rounds left.",
+            article_text="Barcelona can no longer fall out of the top four after beating Rayo Vallecano.",
+        )
+
+        self.assertIn("ұзақмерзімді нарықтарда", updated.betting_impact_kk)
+
+    def test_backfill_betting_impact_does_not_override_existing_copy(self):
+        result = AINewsResult(
+            is_important=True,
+            importance_score=90,
+            importance_level="top",
+            category="football",
+            betting_impact_kk="Бар нарықтық әсер.",
+            image_prompt_en="vertical sports poster",
+        )
+
+        updated = backfill_betting_impact(
+            result,
+            topic="football",
+            title="Barcelona qualify",
+            description="",
+            article_text="",
+        )
+
+        self.assertEqual(updated.betting_impact_kk, "Бар нарықтық әсер.")
 
     def test_ranker_requires_score_and_level(self):
         ranker = NewsRanker(min_score=75)
