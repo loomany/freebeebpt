@@ -73,6 +73,7 @@ def register_admin_news_handlers(dp: Dispatcher, *, context: dict[str, Any]) -> 
     async def test_channel_handler(message: types.Message):
         if not await _ensure_admin(message):
             return
+        channel_chat_id = news_channel_id
         env_value = os.getenv("TELEGRAM_NEWS_CHAT_ID")
         await message.answer(
             f"Проверяю канал. TELEGRAM_NEWS_CHAT_ID={env_value!r}; target_chat_id={channel_chat_id!r}"
