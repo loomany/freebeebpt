@@ -4,7 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock
 
-from services.ai_news_processor import AINewsResult
+from services.ai_news_processor import AINewsResult, ensure_ai_result_category, infer_news_category
 from services.article_extractor import build_fallback_text, clean_article_text
 from services.gnews_service import GNewsService
 from services.news_pipeline import NewsPipeline
@@ -146,6 +146,44 @@ class FormatterAndRankerTests(unittest.TestCase):
             image_prompt_en="vertical sports poster",
         )
         self.assertFalse(ranker.should_send(result))
+
+    def test_format_ai_news_message_uses_ai_category_for_emoji(self):
+        result = AINewsResult(
+            is_important=True,
+            importance_score=90,
+            importance_level="top",
+            category="basketball",
+            rewritten_title_kk="NBA жаңалығы",
+            summary_kk="Қысқаша мазмұн",
+            image_prompt_en="vertical sports poster",
+        )
+
+        message = format_ai_news_message("football", result)[0]
+
+        self.assertTrue(message.startswith("🏀 Basketball"))
+
+    def test_infer_news_category_uses_keywords_when_ai_category_missing(self):
+        payload = ensure_ai_result_category(
+            {
+                "is_important": True,
+                "importance_score": 88,
+                "importance_level": "top",
+                "rewritten_title_kk": "NBA жаңалығы",
+                "summary_kk": "Қысқаша мазмұн",
+                "image_prompt_en": "vertical sports poster",
+            },
+            topic="",
+            title="NBA playoffs update",
+            description="Lakers win again",
+            article_text="The NBA postseason continues tonight.",
+            source_name="ESPN",
+            team_or_player_names=["Lakers"],
+        )
+
+        self.assertEqual(payload["category"], "basketball")
+
+    def test_infer_news_category_has_no_default_football(self):
+        self.assertIsNone(infer_news_category("", "", "Breaking update", "General sports bulletin"))
 
 
 class NewsPipelineTests(unittest.IsolatedAsyncioTestCase):

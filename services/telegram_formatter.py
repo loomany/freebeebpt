@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from services.formatter import TELEGRAM_MESSAGE_LIMIT, TOPIC_LABELS
-from services.ai_news_processor import AINewsResult
+from services.ai_news_processor import AINewsResult, infer_news_category
 
 
 def format_ai_news_message(topic: str, result: AINewsResult) -> list[str]:
+    category = infer_news_category(result.category) or infer_news_category(topic)
+    category_label = TOPIC_LABELS.get(category, (category or topic or "news").title())
     parts = [
-        TOPIC_LABELS.get(topic, topic.title()),
+        category_label,
         "",
         f"📰 {result.rewritten_title_kk or 'Жаңалық'}",
         "",

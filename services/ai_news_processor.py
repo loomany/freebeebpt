@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -23,13 +24,65 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "basketball": (
+        "nba", "wnba", "euroleague", "basketball", "fiba", "ncaa basketball", "march madness",
+    ),
+    "hockey": (
+        "nhl", "khl", "hockey", "stanley cup", "ice hockey",
+    ),
+    "tennis": (
+        "atp", "wta", "tennis", "grand slam", "us open", "wimbledon", "roland garros", "australian open",
+    ),
+    "football": (
+        "football", "soccer", "premier league", "champions league", "uefa", "fifa", "la liga", "serie a", "bundesliga",
+        "ligue 1", "mls", "fa cup",
+    ),
+}
+VALID_CATEGORIES = frozenset(CATEGORY_KEYWORDS)
+
+
+def _normalize_category(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized in VALID_CATEGORIES else ""
+
+
+def infer_news_category(*values: Any) -> str | None:
+    for value in values:
+        normalized = _normalize_category(value)
+        if normalized:
+            return normalized
+
+    haystack = " ".join(str(value or "") for value in values).lower()
+    haystack = re.sub(r"[^a-z0-9#+]+", " ", haystack)
+    for category, keywords in CATEGORY_KEYWORDS.items():
+        if any(keyword in haystack for keyword in keywords):
+            return category
+    return None
+
+
+def ensure_ai_result_category(payload: dict[str, Any], *, topic: str, title: str, description: str, article_text: str, source_name: str, team_or_player_names: list[str] | None) -> dict[str, Any]:
+    enriched_payload = dict(payload)
+    explicit_category = _normalize_category(payload.get("category"))
+    inferred_category = infer_news_category(
+        title,
+        description,
+        article_text,
+        source_name,
+        " ".join(team_or_player_names or []),
+        topic,
+    )
+    enriched_payload["category"] = explicit_category or inferred_category or ""
+    return enriched_payload
+
+
 if PYDANTIC_AVAILABLE:
 
     class AINewsResult(BaseModel):
         is_important: bool
         importance_score: int = Field(ge=0, le=100)
         importance_level: str
-        category: str
+        category: str = ""
         rewritten_title_kk: str = ""
         summary_kk: str = ""
         key_points_kk: list[str] = Field(default_factory=list)
@@ -46,6 +99,14 @@ if PYDANTIC_AVAILABLE:
             if value not in allowed:
                 raise ValueError(f"importance_level must be one of {sorted(allowed)}")
             return value
+
+        @field_validator("category")
+        @classmethod
+        def validate_category(cls, value: str) -> str:
+            normalized = _normalize_category(value)
+            if value and not normalized:
+                raise ValueError(f"category must be one of {sorted(VALID_CATEGORIES)}")
+            return normalized
 
         @field_validator("key_points_kk")
         @classmethod
@@ -69,7 +130,7 @@ else:
         is_important: bool
         importance_score: int
         importance_level: str
-        category: str
+        category: str = ""
         rewritten_title_kk: str = ""
         summary_kk: str = ""
         key_points_kk: list[str] = field(default_factory=list)
@@ -93,6 +154,9 @@ else:
                 raise ValueError("importance_score must be between 0 and 100")
             if self.importance_level not in {"low", "medium", "high", "top"}:
                 raise ValueError("importance_level must be low|medium|high|top")
+            self.category = _normalize_category(self.category)
+            if self.category not in {"", *VALID_CATEGORIES}:
+                raise ValueError("category must be football|tennis|hockey|basketball")
             if len(self.key_points_kk) > 3:
                 raise ValueError("key_points_kk can contain at most 3 items")
             self.key_points_kk = [item.strip() for item in self.key_points_kk if item and item.strip()]
@@ -147,7 +211,17 @@ class AINewsProcessor:
                         {"role": "user", "content": build_news_user_prompt(payload)},
                     ],
                 )
-                parsed = AINewsResult.model_validate(json.loads(response.output_text))
+                parsed = AINewsResult.model_validate(
+                    ensure_ai_result_category(
+                        json.loads(response.output_text),
+                        topic=topic,
+                        title=title,
+                        description=description,
+                        article_text=article_text,
+                        source_name=source_name,
+                        team_or_player_names=team_or_player_names,
+                    )
+                )
                 logger.info("[AI] important=%s score=%s level=%s", parsed.is_important, parsed.importance_score, parsed.importance_level)
                 logger.info("[AI] generated image prompt")
                 logger.info("[AI] betting_impact=%s", "yes" if parsed.betting_impact_kk else "no")
