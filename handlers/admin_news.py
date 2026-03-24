@@ -42,6 +42,7 @@ def register_admin_news_handlers(dp: Dispatcher, *, context: dict[str, Any]) -> 
                 [
                     f"mode: {news_post_mode}",
                     f"api key configured: {'yes' if gnews_service.configured else 'no'}",
+                    f"fal_generation_enabled: {'yes' if news_pipeline.is_fal_generation_enabled() else 'no'}",
                     f"today_requests: {repository.get_daily_requests()}",
                     f"last_fetch_time: {stats['last_fetch_time'] or 'never'}",
                     f"last_topic: {stats['last_topic'] or 'n/a'}",
@@ -52,6 +53,20 @@ def register_admin_news_handlers(dp: Dispatcher, *, context: dict[str, Any]) -> 
                 ]
             )
         )
+
+    @dp.message_handler(commands=["start_fal"])
+    async def start_fal_handler(message: types.Message):
+        if not await _ensure_admin(message):
+            return
+        news_pipeline.set_fal_generation_enabled(True)
+        await message.answer("✅ Генерация изображений включена (/start_fal)")
+
+    @dp.message_handler(commands=["stop_fal"])
+    async def stop_fal_handler(message: types.Message):
+        if not await _ensure_admin(message):
+            return
+        news_pipeline.set_fal_generation_enabled(False)
+        await message.answer("⏸ Генерация изображений отключена (/stop_fal). Новости продолжат публиковаться без картинок.")
 
     @dp.message_handler(commands=["new_state"])
     async def new_state_handler(message: types.Message, state: FSMContext):

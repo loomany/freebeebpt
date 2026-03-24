@@ -105,7 +105,7 @@ register_admin_news_handlers(
 async def start_handler(message: types.Message):
     await message.answer(
         "Привет! Это спортивный новостной бот.\n"
-        "Доступные админ-команды: /news_status, /fetch_news_now, /fetch_topic, /test_channel, /news_test, /news_test_ai, /news_test_image, /news_test_full, /news_test_preview, /news_debug_last, /last_preview_status, /news_test_raw, /news_test_compare, /new_state, /cancel"
+        "Доступные админ-команды: /news_status, /start_fal, /stop_fal, /fetch_news_now, /fetch_topic, /test_channel, /news_test, /news_test_ai, /news_test_image, /news_test_full, /news_test_preview, /news_debug_last, /last_preview_status, /news_test_raw, /news_test_compare, /new_state, /cancel"
     )
 
 

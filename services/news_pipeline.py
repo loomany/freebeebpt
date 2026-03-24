@@ -49,9 +49,16 @@ class NewsPipeline:
         self.extract_timeout = int(os.getenv("ARTICLE_EXTRACT_TIMEOUT", "15"))
         self.article_min_text_length = int(os.getenv("ARTICLE_MIN_TEXT_LENGTH", "800"))
         self.manual_review_required = os.getenv("NEWS_MANUAL_REVIEW_REQUIRED", "true").lower() == "true"
+        self.fal_generation_enabled = os.getenv("FAL_GENERATION_ENABLED", "true").lower() == "true"
 
     def _is_admin_review_mode(self) -> bool:
         return self.news_post_mode == "admin"
+
+    def set_fal_generation_enabled(self, enabled: bool) -> None:
+        self.fal_generation_enabled = enabled
+
+    def is_fal_generation_enabled(self) -> bool:
+        return self.fal_generation_enabled
 
     async def _prepare_article(self, article: dict[str, Any]) -> dict[str, Any]:
         extraction = {"success": False, "text": None, "error": None, "method": "none"}
@@ -105,6 +112,14 @@ class NewsPipeline:
         return fallback_prompt
 
     async def _generate_image(self, article: dict[str, Any], ai_result: AINewsResult) -> dict[str, Any]:
+        if not self.fal_generation_enabled:
+            logger.info("[FAL] skipped manually by /stop_fal article_hash=%s", article.get("article_hash"))
+            return {
+                "request_id": None,
+                "image_url": None,
+                "fal_status": "disabled_by_admin",
+                "fal_error": "fal generation disabled by admin command",
+            }
         prompt = self._ensure_image_prompt(article, ai_result)
         if not prompt:
             return {"request_id": None, "image_url": None, "fal_status": "skipped", "fal_error": "image_prompt_en is empty"}
