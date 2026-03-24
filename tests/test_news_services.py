@@ -498,6 +498,37 @@ class FormatterAndRankerTests(unittest.TestCase):
 
         self.assertTrue(message.startswith("🏀 Basketball"))
 
+    def test_format_ai_news_message_uses_article_description_when_summary_empty(self):
+        result = AINewsResult(
+            is_important=True,
+            importance_score=90,
+            importance_level="top",
+            category="football",
+            rewritten_title_kk="Маңызды тақырып",
+            summary_kk="",
+            image_prompt_en="vertical sports poster",
+        )
+        article = {"description": "Сипаттама бар, сондықтан мәтін бос кетпеуі керек."}
+
+        message = format_ai_news_message("football", result, source_article=article)[0]
+
+        self.assertIn("Сипаттама бар, сондықтан мәтін бос кетпеуі керек.", message)
+
+    def test_format_ai_news_message_uses_default_summary_when_everything_empty(self):
+        result = AINewsResult(
+            is_important=True,
+            importance_score=88,
+            importance_level="high",
+            category="football",
+            rewritten_title_kk="Жаңалық",
+            summary_kk="",
+            image_prompt_en="vertical sports poster",
+        )
+
+        message = format_ai_news_message("football", result)[0]
+
+        self.assertIn("Толық мәтін қолжетімді болғанда жаңартамыз.", message)
+
     def test_infer_news_category_uses_keywords_when_ai_category_missing(self):
         payload = ensure_ai_result_category(
             {
